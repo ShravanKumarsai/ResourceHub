@@ -3,9 +3,11 @@
 import { revalidatePath } from 'next/cache'
 import { requireWorkspaceRole } from '@/lib/auth/workspace'
 import { logSupabaseError } from '@/lib/supabase/dev-error'
+import { enforceRateLimit } from '@/lib/security/rate-limit'
 
 export async function reportIncidentAction(formData: FormData) {
   const { supabase } = await requireWorkspaceRole('student')
+  await enforceRateLimit('incident:report', 10, 300)
   const resourceId = String(formData.get('resource_id') ?? '')
   const bookingId = String(formData.get('booking_id') ?? '') || null
   const severity = String(formData.get('severity') ?? '')
@@ -30,6 +32,7 @@ export async function reportIncidentAction(formData: FormData) {
 
 export async function updateIncidentAction(formData: FormData) {
   const { supabase } = await requireWorkspaceRole('resource_manager')
+  await enforceRateLimit('incident:update', 30, 300)
   const incidentId = String(formData.get('incident_id') ?? '')
   const status = String(formData.get('status') ?? '')
   const note = String(formData.get('note') ?? '').trim()

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { requireWorkspaceRole } from '@/lib/auth/workspace'
+import { enforceRateLimit } from '@/lib/security/rate-limit'
 import type { ResourceSaveInput } from '@/lib/types'
 
 function normalizeCategoryValue(value: string) {
@@ -87,6 +88,7 @@ async function requireOwnerMembership(supabase: Awaited<ReturnType<typeof requir
 export async function saveResource(input: ResourceSaveInput) {
   validateInput(input)
   const { supabase, user } = await requireWorkspaceRole('resource_manager')
+  await enforceRateLimit('resource:save', 30, 300)
   const membership = await requireOwnerMembership(supabase, user.id, input.ownerMembershipId)
   const editableFields = {
     name: input.name.trim(),

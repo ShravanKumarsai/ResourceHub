@@ -68,20 +68,23 @@ begin
     raise exception 'A valid idempotency key is required.' using errcode = '22023';
   end if;
 
+  insert into public.operation_requests (operation_key, operation_type, actor_id, institution_id, payload_hash)
+  values (p_operation_key, p_operation_type, p_actor_id, p_institution_id, v_hash)
+  on conflict (actor_id, operation_type, operation_key) do nothing;
+
   select * into v_existing
   from public.operation_requests
   where actor_id = p_actor_id and operation_type = p_operation_type and operation_key = p_operation_key
   for update;
 
-  if found then
-    if v_existing.payload_hash <> v_hash then
-      raise exception 'This idempotency key was already used with a different payload.' using errcode = '23505';
-    end if;
+  if v_existing.payload_hash <> v_hash then
+    raise exception 'This idempotency key was already used with a different payload.' using errcode = '23505';
+  end if;
+
+  if v_existing.completed_at is not null then
     return jsonb_build_object('replayed', true, 'result', coalesce(v_existing.result, '{}'::jsonb));
   end if;
 
-  insert into public.operation_requests (operation_key, operation_type, actor_id, institution_id, payload_hash)
-  values (p_operation_key, p_operation_type, p_actor_id, p_institution_id, v_hash);
   return jsonb_build_object('replayed', false, 'result', '{}'::jsonb);
 end;
 $$;
@@ -102,10 +105,8 @@ as $$
   where actor_id = p_actor_id and operation_type = p_operation_type and operation_key = p_operation_key;
 $$;
 
-revoke all on function resourcehub_private.begin_operation(text, text, uuid, uuid, jsonb) from public, anon, service_role;
-revoke all on function resourcehub_private.finish_operation(text, text, uuid, jsonb) from public, anon, service_role;
-grant execute on function resourcehub_private.begin_operation(text, text, uuid, uuid, jsonb) to authenticated;
-grant execute on function resourcehub_private.finish_operation(text, text, uuid, jsonb) to authenticated;
+revoke all on function resourcehub_private.begin_operation(text, text, uuid, uuid, jsonb) from public, anon, authenticated, service_role;
+revoke all on function resourcehub_private.finish_operation(text, text, uuid, jsonb) from public, anon, authenticated, service_role;
 
 create or replace function public.request_resource_booking(
   p_resource_id uuid, p_starts_at timestamptz, p_ends_at timestamptz, p_purpose text, p_idempotency_key text
@@ -209,13 +210,6 @@ begin
 end; $$;
 
 revoke all on public.operation_requests from public, anon, authenticated, service_role;
-revoke all on function public.request_resource_booking(uuid,timestamptz,timestamptz,text) from public, anon, authenticated, service_role;
-revoke all on function public.review_resource_booking(uuid,text,text) from public, anon, authenticated, service_role;
-revoke all on function public.cancel_resource_booking(uuid) from public, anon, authenticated, service_role;
-revoke all on function public.record_booking_condition_report(uuid,text,text,text,text[]) from public, anon, authenticated, service_role;
-revoke all on function public.report_resource_incident(uuid,uuid,text,text,text) from public, anon, authenticated, service_role;
-revoke all on function public.update_resource_incident(uuid,text,text) from public, anon, authenticated, service_role;
-revoke all on function public.join_resource_waiting_list(uuid,timestamptz,timestamptz) from public, anon, authenticated, service_role;
 grant execute on function public.request_resource_booking(uuid,timestamptz,timestamptz,text,text) to authenticated;
 grant execute on function public.review_resource_booking(uuid,text,text,text) to authenticated;
 grant execute on function public.cancel_resource_booking(uuid,text) to authenticated;
@@ -223,5 +217,45 @@ grant execute on function public.record_booking_condition_report(uuid,text,text,
 grant execute on function public.report_resource_incident(uuid,uuid,text,text,text,text) to authenticated;
 grant execute on function public.update_resource_incident(uuid,text,text,text) to authenticated;
 grant execute on function public.join_resource_waiting_list(uuid,timestamptz,timestamptz,text) to authenticated;
+
+create or replace function public.update_institution_reservation_limit(
+  p_institution_id uuid,
+  p_limit integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor uuid := auth.uid();
+begin
+  if p_limit < 1 or p_limit > 100 then
+    raise exception 'Reservation limit must be between 1 and 100.' using errcode = '22023';
+  end if;
+  if not exists (
+    select 1
+    from public.institution_memberships im
+    join public.institution_membership_roles imr on imr.membership_id = im.id
+    where im.institution_id = p_institution_id
+      and im.user_id = v_actor
+      and im.status = 'active'
+      and imr.role = 'institution_admin'
+  ) then
+    raise exception 'Active institution administrator authorization required.' using errcode = '42501';
+  end if;
+  update public.institutions
+  set max_active_reservations_per_user = p_limit
+  where id = p_institution_id and is_active;
+  if not found then
+    raise exception 'Institution not found.' using errcode = 'P0002';
+  end if;
+  insert into public.activity_events (institution_id, actor_id, event_type, summary)
+  values (p_institution_id, v_actor, 'institution_reservation_limit_updated', 'The active reservation limit was updated.');
+end;
+$$;
+
+revoke all on function public.update_institution_reservation_limit(uuid, integer) from public, anon, service_role;
+grant execute on function public.update_institution_reservation_limit(uuid, integer) to authenticated;
 
 commit;

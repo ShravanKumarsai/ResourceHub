@@ -179,6 +179,8 @@ export type Database = {
       list_institution_membership_directory: { Args: { p_institution_id: string }; Returns: { membership_id: string; applicant_name: string | null; applicant_email: string | null; requested_role: string | null; approved_roles: string[]; status: string; requested_at: string; reviewed_at: string | null }[] }
       review_institution_membership: { Args: { p_membership_id: string; p_status: string; p_roles: string[] }; Returns: undefined }
       update_institution_name: { Args: { p_institution_id: string; p_name: string }; Returns: { id: string; name: string; slug: string; is_active: boolean; created_at: string; updated_at: string } }
+      consume_rate_limit: { Args: { p_scope: string; p_limit: number; p_window_seconds: number }; Returns: boolean }
+      update_institution_reservation_limit: { Args: { p_institution_id: string; p_limit: number }; Returns: undefined }
     }
     Enums: Record<string, never>
     CompositeTypes: Record<string, never>

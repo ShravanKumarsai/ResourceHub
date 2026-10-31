@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { requireAuthenticatedUser } from '@/lib/auth/server'
 import { logSupabaseError } from '@/lib/supabase/dev-error'
+import { enforceRateLimit } from '@/lib/security/rate-limit'
 
 export type MembershipRequestState = {
   status: 'idle' | 'success' | 'error'
@@ -18,6 +19,7 @@ export async function submitMembershipRequestAction(
   formData: FormData,
 ): Promise<MembershipRequestState> {
   const { supabase, user } = await requireAuthenticatedUser()
+  await enforceRateLimit('membership:request', 5, 300)
   const institutionId = formData.get('institution_id')
   const requestedRole = formData.get('requested_role')
 

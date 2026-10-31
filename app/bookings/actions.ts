@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { requireWorkspaceRole } from '@/lib/auth/workspace'
+import { enforceRateLimit } from '@/lib/security/rate-limit'
 
 const INVALID_TIME_MESSAGE = 'Choose a valid future time range before submitting.'
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -52,6 +53,7 @@ export async function submitBookingRequest(input: {
   idempotencyKey?: string
 }) {
   const { supabase, user } = await requireWorkspaceRole('student')
+  await enforceRateLimit('booking:submit', 10, 60)
 
   if (!input.resourceId || !UUID_PATTERN.test(input.resourceId)) {
     throw new Error('The selected resource is invalid.')
@@ -130,6 +132,7 @@ export async function reviewBookingRequest(input: {
   idempotencyKey?: string
 }) {
   const { supabase, user } = await requireWorkspaceRole('resource_manager')
+  await enforceRateLimit('booking:review', 30, 60)
 
   if (!UUID_PATTERN.test(input.bookingId)) {
     throw new Error('This booking request is invalid.')
@@ -184,6 +187,7 @@ export async function reviewBookingRequest(input: {
 
 export async function cancelBookingRequest(bookingId: string, idempotencyKey?: string) {
   const { supabase, user } = await requireWorkspaceRole('student')
+  await enforceRateLimit('booking:cancel', 30, 60)
 
   if (!UUID_PATTERN.test(bookingId)) {
     throw new Error('This booking is invalid.')
@@ -226,6 +230,7 @@ export async function recordBookingCondition(input: {
   idempotencyKey?: string
 }) {
   const { supabase, user } = await requireWorkspaceRole('student')
+  await enforceRateLimit('booking:condition', 20, 300)
 
   if (!UUID_PATTERN.test(input.bookingId)) {
     throw new Error('This booking is invalid.')
@@ -285,6 +290,7 @@ export async function joinWaitingListRequest(input: {
   idempotencyKey?: string
 }) {
   const { supabase, user } = await requireWorkspaceRole('student')
+  await enforceRateLimit('waiting-list:join', 10, 300)
 
   if (!UUID_PATTERN.test(input.resourceId)) {
     throw new Error('The selected resource is invalid.')
