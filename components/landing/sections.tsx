@@ -13,7 +13,7 @@ import {
 import { ResourceCard } from '@/components/resource-card'
 import { buttonVariants } from '@/components/ui/button'
 import { CATEGORY_BLURB, CATEGORY_ICON } from '@/lib/categories'
-import { CALDER, HARLOW, NIT, RESOURCES } from '@/lib/data'
+import type { Resource } from '@/lib/types'
 import { CATEGORIES } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -39,7 +39,7 @@ function SectionHeading({
   )
 }
 
-export function CategoryGrid() {
+export function CategoryGrid({ resources }: { resources: Resource[] }) {
   return (
     <section className="container-page py-16 lg:py-20" aria-labelledby="categories-heading">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -58,7 +58,7 @@ export function CategoryGrid() {
       <ul className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {CATEGORIES.map((category) => {
           const Icon = CATEGORY_ICON[category]
-          const count = RESOURCES.filter((r) => r.category === category).length
+          const count = resources.filter((resource) => resource.category === category).length
           return (
             <li key={category}>
               <Link
@@ -86,8 +86,8 @@ export function CategoryGrid() {
   )
 }
 
-export function FeaturedResources() {
-  const featured = RESOURCES.filter((r) => ['r-1', 'r-2', 'r-5'].includes(r.id))
+export function FeaturedResources({ resources }: { resources: Resource[] }) {
+  const featured = resources.slice(0, 3)
   return (
     <section className="bg-canvas border-line border-y py-16 lg:py-20">
       <div className="container-page">
@@ -255,7 +255,7 @@ export function ForInstitutions() {
   )
 }
 
-export function About() {
+export function About({ institutions }: { institutions: string[] }) {
   return (
     <section id="about" className="bg-canvas border-line scroll-mt-20 border-t py-16 lg:py-20">
       <div className="container-page grid gap-10 lg:grid-cols-2">
@@ -270,16 +270,14 @@ export function About() {
             Participating institutions
           </h3>
           <ul className="border-line mt-4 divide-y divide-line-muted rounded-xl border bg-white">
-            {[
-              { name: NIT, note: 'Robotics, electronics, makerspace' },
-              { name: HARLOW, note: 'Fabrication, structures and materials' },
-              { name: CALDER, note: 'Computing, microscopy, characterisation' },
-            ].map((i) => (
-              <li key={i.name} className="flex flex-col gap-0.5 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
-                <span className="text-sm font-medium">{i.name}</span>
-                <span className="text-ink-muted text-[13px]">{i.note}</span>
+            {institutions.map((name) => (
+              <li key={name} className="px-4 py-3.5">
+                <span className="text-sm font-medium">{name}</span>
               </li>
             ))}
+            {!institutions.length ? (
+              <li className="text-ink-muted px-4 py-3.5 text-sm">No active institutions listed yet.</li>
+            ) : null}
           </ul>
         </div>
       </div>

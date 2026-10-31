@@ -4,6 +4,8 @@ import { ResourceCatalogue } from '@/components/explore/resource-catalogue'
 import { PageHeader } from '@/components/page-header'
 import { listActiveInstitutionNames, listListedResources } from '@/lib/resources/queries'
 
+export const dynamic = 'force-dynamic'
+
 export const metadata: Metadata = {
   title: 'Explore resources',
   description:
