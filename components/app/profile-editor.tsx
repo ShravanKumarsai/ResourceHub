@@ -16,6 +16,10 @@ import {
 import { toast } from 'sonner'
 
 import { updateProfileAction, type ProfileActionState } from '@/app/profile/actions'
+import {
+  updateInstitutionReservationLimitAction,
+  type MembershipReviewActionState,
+} from '@/app/institution/dashboard/actions'
 import { Avatar } from '@/components/app/avatar'
 import { PageHeader } from '@/components/page-header'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -40,6 +44,7 @@ export function ProfileEditor({
   accountRows,
   userEmail,
   otherWorkspace,
+  reservationLimit,
 }: {
   initialProfile: { display_name: string | null; title: string | null; department: string | null }
   fallbackName: string
@@ -50,9 +55,14 @@ export function ProfileEditor({
   accountRows: Array<[string, string]>
   userEmail: string
   otherWorkspace: { label: string; href: string } | null
+  reservationLimit?: number
 }) {
   const [isEditing, setIsEditing] = useState(false)
   const [state, formAction, pending] = useActionState(updateProfileAction, INITIAL_STATE)
+  const [limitState, limitFormAction, limitPending] = useActionState<MembershipReviewActionState, FormData>(
+    updateInstitutionReservationLimitAction,
+    { status: 'idle', message: '' },
+  )
 
   useEffect(() => {
     if (state.status === 'success') {
@@ -62,6 +72,14 @@ export function ProfileEditor({
       toast.error(state.message)
     }
   }, [state])
+
+  useEffect(() => {
+    if (limitState.status === 'success') {
+      toast.success(limitState.message)
+    } else if (limitState.status === 'error') {
+      toast.error(limitState.message)
+    }
+  }, [limitState])
 
   const profile = state.profile ?? initialProfile
   const displayName = profile.display_name?.trim() || fallbackName
@@ -263,6 +281,23 @@ export function ProfileEditor({
               </Link>
             ) : null}
           </section>
+
+          {reservationLimit !== undefined ? (
+            <section className="surface-panel p-5">
+              <div>
+                <h3 className="text-base font-semibold text-ink">Reservation policy</h3>
+                <p className="mt-1 text-sm text-ink-muted">Set the maximum number of active reservations one member can hold.</p>
+              </div>
+              <form action={limitFormAction} className="mt-4 flex items-end gap-3">
+                <div className="flex-1">
+                  <label htmlFor="reservation-limit" className="mb-1.5 block text-[13px] font-medium text-ink">Active reservations per member</label>
+                  <Input id="reservation-limit" name="max_active_reservations_per_user" type="number" min={1} max={50} step={1} defaultValue={reservationLimit} required aria-describedby="reservation-limit-help" />
+                  <p id="reservation-limit-help" className="mt-1.5 text-xs text-ink-muted">Whole numbers from 1 to 50.</p>
+                </div>
+                <Button type="submit" disabled={limitPending}>{limitPending ? 'Saving…' : 'Save limit'}</Button>
+              </form>
+            </section>
+          ) : null}
 
           <section className="surface-panel p-5">
             <div className="flex items-center gap-2">

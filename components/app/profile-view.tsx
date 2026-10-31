@@ -150,6 +150,7 @@ export async function ProfileView({ role }: { role: Role }) {
       statCards={statCards}
       accountRows={accountRows}
       otherWorkspace={otherWorkspace}
+      reservationLimit={role === 'institution' ? institution?.max_active_reservations_per_user : undefined}
     />
   )
 }

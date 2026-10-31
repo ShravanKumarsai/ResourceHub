@@ -113,6 +113,38 @@ export async function reviewMembershipAction(
   }
 }
 
+export async function updateInstitutionReservationLimitAction(
+  _previousState: MembershipReviewActionState = INITIAL_STATE,
+  formData: FormData,
+): Promise<MembershipReviewActionState> {
+  const { supabase, institution } = await requireInstitutionAdmin()
+  const rawLimit = formData.get('max_active_reservations_per_user')
+  const limit = typeof rawLimit === 'string' ? Number(rawLimit) : Number.NaN
+
+  if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+    return { status: 'error', message: 'Choose a whole-number limit between 1 and 50.' }
+  }
+
+  const { error } = await supabase.rpc('update_institution_reservation_limit', {
+    p_institution_id: institution.id,
+    p_limit: limit,
+  })
+
+  if (error) {
+    logSupabaseError('Updating institution reservation limit failed', error)
+    if (error.code === '42501') {
+      return { status: 'error', message: 'Only active institution administrators can change this limit.' }
+    }
+    if (error.code === 'PGRST202' || error.code === '42883') {
+      return { status: 'error', message: 'Reservation limits are not available until the database migration is applied.' }
+    }
+    return { status: 'error', message: 'The reservation limit could not be saved. Please try again.' }
+  }
+
+  revalidatePath('/institution', 'layout')
+  return { status: 'success', message: 'Reservation limit updated.' }
+}
+
 export async function updateInstitutionNameAction(
   _previousState: MembershipReviewActionState = INITIAL_STATE,
   formData: FormData,

@@ -18,6 +18,7 @@ type Institution = {
   name: string
   slug: string
   is_active: boolean
+  max_active_reservations_per_user: number
   created_at: string
   updated_at: string
 }

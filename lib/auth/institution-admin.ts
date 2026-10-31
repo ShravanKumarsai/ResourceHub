@@ -21,7 +21,7 @@ export async function requireInstitutionAdmin() {
 
   const { data: institution, error: institutionError } = await supabase
     .from('institutions')
-    .select('id, name, slug, is_active')
+    .select('id, name, slug, is_active, max_active_reservations_per_user')
     .eq('id', institutionId)
     .eq('is_active', true)
     .maybeSingle()
