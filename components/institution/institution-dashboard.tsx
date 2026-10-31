@@ -21,7 +21,7 @@ import {
   MembershipReviewSection,
   type PendingApplicant,
 } from '@/components/institution/membership-review-section'
-import { updateInstitutionNameAction } from '@/app/institution/dashboard/actions'
+import { InstitutionNameForm } from '@/components/institution/institution-name-form'
 
 interface Institution {
   id: string
@@ -323,45 +323,7 @@ export function InstitutionDashboard({
               Keep the institution record aligned with the operational workspace used by students, owners and administrators.
             </p>
 
-            <form action={updateInstitutionNameAction} className="mt-5 space-y-4">
-              <div>
-                <label htmlFor="institution-name" className="text-ink-muted mb-2 block text-xs font-medium uppercase tracking-[0.08em]">
-                  Institution name
-                </label>
-                <input
-                  id="institution-name"
-                  name="name"
-                  defaultValue={institution.name}
-                  className="w-full rounded-xl border border-line bg-canvas px-3 py-2.5 text-sm text-ink outline-none transition focus:border-teal focus:ring-2 focus:ring-teal/15"
-                  maxLength={200}
-                  required
-                />
-              </div>
-
-              <div className="rounded-xl border border-line bg-canvas p-3">
-                <p className="text-ink-muted text-[11px] font-semibold uppercase tracking-[0.08em]">Current identity</p>
-                <div className="mt-2 grid gap-2 text-xs">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-ink-muted">Slug</span>
-                    <span className="font-mono text-ink">{institution.slug}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-ink-muted">Status</span>
-                    <span className="inline-flex items-center gap-1.5 font-medium text-status-approved">
-                      <span className="size-1.5 rounded-full bg-status-approved" />
-                      Active
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                className="inline-flex items-center justify-center rounded-xl bg-navy px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-navy/90"
-              >
-                Save institution name
-              </button>
-            </form>
+            <InstitutionNameForm key={institution.name} defaultName={institution.name} slug={institution.slug} />
           </section>
 
           <section className="rounded-2xl border border-line bg-white p-5 shadow-[0_8px_24px_-22px_rgba(16,37,56,0.5)] sm:p-6">

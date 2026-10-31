@@ -1,6 +1,7 @@
 import {
   Activity,
   ArrowLeftRight,
+  Building2,
   CalendarCheck,
   ClipboardList,
   FlaskConical,
@@ -88,7 +89,10 @@ export const NAV: Record<Role, NavGroup[]> = {
     },
     {
       heading: 'Account',
-      items: [{ href: '/institution/dashboard#settings', label: 'Institution details', icon: UserRound }],
+      items: [
+        { href: '/institution/profile', label: 'My profile', icon: UserRound },
+        { href: '/institution/dashboard#settings', label: 'Institution details', icon: Building2 },
+      ],
     },
   ],
 }

@@ -1,91 +1,126 @@
 import { ProfileEditor } from '@/components/app/profile-editor'
+import { requireInstitutionAdmin } from '@/lib/auth/institution-admin'
 import { requireWorkspaceRole } from '@/lib/auth/workspace'
+import { resolveDisplayName } from '@/lib/identity'
 import { ROLE_LABEL } from '@/lib/nav'
 import type { Role } from '@/lib/types'
 
-export async function ProfileView({ role }: { role: Role }) {
-  const workspace = role === 'student' ? 'student' : 'resource_manager'
-  const { supabase, user } = await requireWorkspaceRole(workspace)
+const MEMBERSHIP_ROLE_LABEL: Record<string, string> = {
+  student: 'Student / researcher',
+  resource_owner: 'Resource owner',
+  institution_admin: 'Institution admin',
+}
 
-  const [profileResult, membershipsResult, bookingsResult, incidentsResult, resourceCountResult] =
-    await Promise.all([
-      supabase.from('profiles').select('display_name, title, department').eq('id', user.id).maybeSingle(),
+interface MembershipRow {
+  id: string
+  status: string
+  institutions: { name: string } | { name: string }[] | null
+  institution_membership_roles: { role: string }[]
+}
+
+function countOrDash(result: { count: number | null; error: unknown }) {
+  return result.error ? '—' : (result.count ?? 0)
+}
+
+export async function ProfileView({ role }: { role: Role }) {
+  const { supabase, user, institution } =
+    role === 'institution'
+      ? await requireInstitutionAdmin()
+      : { ...(await requireWorkspaceRole(role === 'student' ? 'student' : 'resource_manager')), institution: null }
+
+  const [profileResult, membershipsResult, statResults] = await Promise.all([
+    supabase.from('profiles').select('display_name, title, department').eq('id', user.id).maybeSingle(),
+    supabase
+      .from('institution_memberships')
+      .select('id, status, institutions(name), institution_membership_roles(role)')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false }),
+    loadStats(),
+  ])
+
+  async function loadStats() {
+    if (role === 'student') {
+      const [total, approved, incidents] = await Promise.all([
+        supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('requester_user_id', user.id),
+        supabase
+          .from('bookings')
+          .select('id', { count: 'exact', head: true })
+          .eq('requester_user_id', user.id)
+          .eq('status', 'approved'),
+        supabase.from('incidents').select('id', { count: 'exact', head: true }).eq('reporter_user_id', user.id),
+      ])
+      return { total, approved, incidents }
+    }
+    if (role === 'owner') {
+      const resources = await supabase
+        .from('resources')
+        .select('id', { count: 'exact', head: true })
+        .eq('owner_user_id', user.id)
+      return { resources }
+    }
+    const [active, pending] = await Promise.all([
       supabase
         .from('institution_memberships')
-        .select('id, institution_id, status, requested_role')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false }),
+        .select('id', { count: 'exact', head: true })
+        .eq('institution_id', institution!.id)
+        .eq('status', 'active'),
       supabase
-        .from('bookings')
-        .select('id, status, starts_at, ends_at, purpose')
-        .eq('requester_user_id', user.id)
-        .order('starts_at', { ascending: false })
-        .limit(5),
-      supabase
-        .from('incidents')
-        .select('id, status, title, created_at')
-        .eq('reporter_user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(5),
-      role === 'owner'
-        ? supabase.from('resources').select('id', { count: 'exact', head: true }).eq('owner_user_id', user.id)
-        : Promise.resolve({ count: 0, error: null }),
+        .from('institution_memberships')
+        .select('id', { count: 'exact', head: true })
+        .eq('institution_id', institution!.id)
+        .eq('status', 'pending'),
     ])
+    return { active, pending }
+  }
 
   const profile = profileResult.data
-  const memberships = membershipsResult.data ?? []
-  const institutionIds = [...new Set(memberships.map((membership) => membership.institution_id))]
-  const institutionMap = new Map<string, string>()
-
-  if (institutionIds.length > 0) {
-    const { data: institutions } = await supabase
-      .from('institutions')
-      .select('id, name')
-      .in('id', institutionIds)
-
-    ;(institutions ?? []).forEach((institution) => {
-      institutionMap.set(institution.id, institution.name)
-    })
-  }
-
-  const membershipIds = memberships.map((membership) => membership.id)
-  const roleMap = new Map<string, string[]>()
-  if (membershipIds.length > 0) {
-    const { data: memberRoles } = await supabase
-      .from('institution_membership_roles')
-      .select('membership_id, role')
-      .in('membership_id', membershipIds)
-
-    ;(memberRoles ?? []).forEach((membershipRole) => {
-      const existing = roleMap.get(membershipRole.membership_id) ?? []
-      existing.push(membershipRole.role)
-      roleMap.set(membershipRole.membership_id, existing)
-    })
-  }
-
-  const bookings = bookingsResult.data ?? []
-  const incidents = incidentsResult.data ?? []
+  const memberships = (membershipsResult.data ?? []) as unknown as MembershipRow[]
   const activeMembership = memberships.find((membership) => membership.status === 'active')
-  const institutionName = activeMembership
-    ? institutionMap.get(activeMembership.institution_id) ?? 'Institution'
-    : 'Not linked'
-  const roleNames = activeMembership ? roleMap.get(activeMembership.id) ?? [] : []
+  const embedded = activeMembership?.institutions
+  const membershipInstitutionName = Array.isArray(embedded) ? embedded[0]?.name : embedded?.name
+  const institutionName = institution?.name ?? membershipInstitutionName ?? 'Not linked'
+  const roleNames = (activeMembership?.institution_membership_roles ?? []).map(
+    (membershipRole) => MEMBERSHIP_ROLE_LABEL[membershipRole.role] ?? membershipRole.role,
+  )
 
-  const statCards =
-    role === 'student'
-      ? [
-          { label: 'Bookings made', value: bookings.length, hint: 'Across your recent activity' },
-          { label: 'Approved', value: bookings.filter((booking) => booking.status === 'approved').length, hint: 'Confirmed sessions' },
-          { label: 'Incidents', value: incidents.length, hint: 'Logged to date' },
-        ]
-      : [
-          { label: 'Resources', value: resourceCountResult.count ?? 0, hint: 'Managed in your workspace' },
-          { label: 'Status', value: activeMembership ? 'Active' : 'Pending', hint: 'Current membership state' },
-          { label: 'Institution', value: institutionName, hint: 'Primary organisation' },
-        ]
+  const fallbackName = resolveDisplayName({
+    metadata: user.user_metadata,
+    email: user.email,
+  })
+
+  let statCards: Array<{ label: string; value: number | string; hint: string }>
+  if (role === 'student') {
+    const stats = statResults as Awaited<ReturnType<typeof loadStats>> & {
+      total: { count: number | null; error: unknown }
+      approved: { count: number | null; error: unknown }
+      incidents: { count: number | null; error: unknown }
+    }
+    statCards = [
+      { label: 'Bookings made', value: countOrDash(stats.total), hint: 'Across your activity' },
+      { label: 'Approved', value: countOrDash(stats.approved), hint: 'Confirmed sessions' },
+      { label: 'Incidents', value: countOrDash(stats.incidents), hint: 'Logged to date' },
+    ]
+  } else if (role === 'owner') {
+    const stats = statResults as { resources: { count: number | null; error: unknown } }
+    statCards = [
+      { label: 'Resources', value: countOrDash(stats.resources), hint: 'Managed in your workspace' },
+      { label: 'Status', value: activeMembership ? 'Active' : 'Pending', hint: 'Current membership state' },
+      { label: 'Institution', value: institutionName, hint: 'Primary organisation' },
+    ]
+  } else {
+    const stats = statResults as {
+      active: { count: number | null; error: unknown }
+      pending: { count: number | null; error: unknown }
+    }
+    statCards = [
+      { label: 'Active members', value: countOrDash(stats.active), hint: 'In your institution' },
+      { label: 'Pending requests', value: countOrDash(stats.pending), hint: 'Awaiting review' },
+      { label: 'Institution', value: institutionName, hint: 'Primary organisation' },
+    ]
+  }
 
   const accountRows: Array<[string, string]> = [
-    ['Full name', profile?.display_name ?? user.user_metadata?.full_name ?? user.user_metadata?.display_name ?? 'Not provided'],
+    ['Full name', profile?.display_name?.trim() || fallbackName],
     ['Email', user.email ?? 'Unknown'],
     ['Role', ROLE_LABEL[role]],
     ['Title', profile?.title ?? 'Not set'],
@@ -93,25 +128,28 @@ export async function ProfileView({ role }: { role: Role }) {
     ['Department', profile?.department ?? 'Not set'],
   ]
 
-  const other: Role = role === 'student' ? 'owner' : 'student'
+  const otherWorkspace =
+    role === 'student'
+      ? { label: 'Open resource owner workspace', href: '/owner/dashboard' }
+      : role === 'owner'
+        ? { label: 'Open student workspace', href: '/student/dashboard' }
+        : null
 
   return (
     <ProfileEditor
-      userId={user.id}
-      userEmail={user.email ?? 'member@resourcehub.local'}
+      userEmail={user.email ?? ''}
       initialProfile={{
         display_name: profile?.display_name ?? null,
         title: profile?.title ?? null,
         department: profile?.department ?? null,
       }}
-      role={role}
+      fallbackName={fallbackName}
       roleLabel={ROLE_LABEL[role]}
       institutionName={institutionName}
       roleNames={roleNames}
       statCards={statCards}
       accountRows={accountRows}
-      otherRole={other}
-      otherHref={`/${other}/dashboard`}
+      otherWorkspace={otherWorkspace}
     />
   )
 }
