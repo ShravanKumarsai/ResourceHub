@@ -1,0 +1,46 @@
+create or replace function public.update_institution_name(
+  p_institution_id uuid,
+  p_name text
+)
+returns public.institutions
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_name text := btrim(p_name);
+  v_row public.institutions%rowtype;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication is required.'
+      using errcode = '42501';
+  end if;
+
+  if v_name = '' or length(v_name) > 200 then
+    raise exception 'Institution name is invalid.'
+      using errcode = '22023';
+  end if;
+
+  if not resourcehub_private.is_institution_admin(p_institution_id) then
+    raise exception 'Only active institution administrators can rename this institution.'
+      using errcode = '42501';
+  end if;
+
+  update public.institutions
+  set name = v_name,
+      updated_at = now()
+  where id = p_institution_id
+  returning *
+  into v_row;
+
+  if not found then
+    raise exception 'Institution not found.'
+      using errcode = 'P0002';
+  end if;
+
+  return v_row;
+end;
+$$;
+
+revoke all on function public.update_institution_name(uuid, text) from public, anon, authenticated, service_role;
+grant execute on function public.update_institution_name(uuid, text) to authenticated;
