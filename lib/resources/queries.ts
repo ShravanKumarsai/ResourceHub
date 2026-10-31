@@ -32,7 +32,12 @@ async function mapResources(rows: ResourceRow[], supabase: Awaited<ReturnType<ty
     ? await supabase.from('institutions').select('id, name').in('id', institutionIds)
     : { data: [], error: null }
 
-  if (institutionsResult.error) throw institutionsResult.error
+  if (institutionsResult.error && institutionsResult.error.code !== '42501') {
+    throw institutionsResult.error
+  }
+  if (institutionsResult.error?.code === '42501') {
+    console.warn('[ResourceHub] Public institution discovery is unavailable until the discovery migration is applied.')
+  }
   const institutionNames = new Map(
     (institutionsResult.data ?? []).map((institution) => [institution.id, institution.name]),
   )
@@ -75,7 +80,13 @@ export async function listListedResources() {
     .eq('listed', true)
     .order('created_at', { ascending: false })
 
-  if (error) throw error
+  if (error) {
+    if (error.code === '42501') {
+      console.warn('[ResourceHub] Public resource discovery is unavailable until the discovery migration is applied.')
+      return []
+    }
+    throw error
+  }
   return mapResources(data ?? [], supabase)
 }
 
@@ -200,6 +211,12 @@ export async function listActiveInstitutionNames() {
     .eq('is_active', true)
     .order('name')
 
-  if (error) throw error
+  if (error) {
+    if (error.code === '42501') {
+      console.warn('[ResourceHub] Public institution discovery is unavailable until the discovery migration is applied.')
+      return []
+    }
+    throw error
+  }
   return (data ?? []).map((institution) => institution.name)
 }
