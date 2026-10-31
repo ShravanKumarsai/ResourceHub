@@ -1,7 +1,13 @@
 import { AppShell } from '@/components/app/app-shell'
+import { getAccountIdentity } from '@/lib/auth/identity'
 import { requireWorkspaceRole } from '@/lib/auth/workspace'
 
 export default async function OwnerLayout({ children }: { children: React.ReactNode }) {
-  const { user } = await requireWorkspaceRole('resource_manager')
-  return <AppShell role="owner" userId={user.id}>{children}</AppShell>
+  const { supabase, user } = await requireWorkspaceRole('resource_manager')
+  const identity = await getAccountIdentity(supabase, user)
+  return (
+    <AppShell role="owner" userId={user.id} identity={identity}>
+      {children}
+    </AppShell>
+  )
 }

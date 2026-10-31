@@ -113,17 +113,23 @@ export async function reviewMembershipAction(
   }
 }
 
-export async function updateInstitutionNameAction(formData: FormData): Promise<void> {
+export async function updateInstitutionNameAction(
+  _previousState: MembershipReviewActionState = INITIAL_STATE,
+  formData: FormData,
+): Promise<MembershipReviewActionState> {
   const { supabase, institution } = await requireInstitutionAdmin()
   const rawName = formData.get('name')
 
   if (typeof rawName !== 'string') {
-    return
+    return { status: 'error', message: 'Enter an institution name.' }
   }
 
   const name = rawName.trim()
-  if (!name || name.length > 200) {
-    return
+  if (!name) {
+    return { status: 'error', message: 'Enter an institution name.' }
+  }
+  if (name.length > 200) {
+    return { status: 'error', message: 'Use 200 characters or fewer.' }
   }
 
   const { error } = await supabase.rpc('update_institution_name', {
@@ -133,8 +139,19 @@ export async function updateInstitutionNameAction(formData: FormData): Promise<v
 
   if (error) {
     logSupabaseError('Updating institution name failed', error)
-    return
+
+    if (error.code === '42501') {
+      return { status: 'error', message: 'Only active institution administrators can rename this institution.' }
+    }
+    if (error.code === 'PGRST202' || error.code === '42883') {
+      return {
+        status: 'error',
+        message: 'Renaming is not available yet because the database update has not been applied.',
+      }
+    }
+    return { status: 'error', message: 'The institution name could not be saved. Please try again.' }
   }
 
-  revalidatePath('/institution/dashboard')
+  revalidatePath('/institution', 'layout')
+  return { status: 'success', message: 'Institution name updated.' }
 }

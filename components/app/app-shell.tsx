@@ -38,6 +38,7 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar'
 import { NAV, ROLE_LABEL } from '@/lib/nav'
+import type { AccountIdentity } from '@/lib/identity'
 import { useStore } from '@/lib/store'
 import type { Role } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -159,14 +160,15 @@ function Breadcrumbs({ role }: { role: Role }) {
 export function AppShell({
   role,
   userId,
+  identity,
   children,
 }: {
   role: Role
   userId: string
+  identity: AccountIdentity
   children: React.ReactNode
 }) {
-  const { userFor } = useStore()
-  const user = userFor(role)
+  const user = identity
   const other: Role = role === 'student' ? 'owner' : role === 'owner' ? 'student' : 'student'
   const [unreadCount, setUnreadCount] = useState(0)
 
@@ -217,7 +219,7 @@ export function AppShell({
             <Avatar initials={user.initials} />
             <div className="min-w-0 flex-1">
               <p className="truncate text-[13px] font-semibold text-navy">{user.name}</p>
-              <p className="text-ink-muted truncate text-[11px]">{ROLE_LABEL[role]}</p>
+              <p className="text-ink-muted truncate text-[11px]">{user.institutionName ?? ROLE_LABEL[role]}</p>
             </div>
           </div>
           <div className="mt-3">
@@ -270,19 +272,15 @@ export function AppShell({
                     <DropdownMenuLabel className="font-normal">
                       <span className="block text-sm font-semibold text-navy">{user.name}</span>
                       <span className="text-ink-muted block text-xs">{user.email}</span>
+                      {user.institutionName ? (
+                        <span className="text-ink-muted block text-xs">{user.institutionName}</span>
+                      ) : null}
                     </DropdownMenuLabel>
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    render={
-                      <Link
-                        href={role === 'institution' ? '/institution/dashboard#settings' : `/${role}/profile`}
-                        className="flex items-center gap-2"
-                      />
-                    }
-                  >
+                  <DropdownMenuItem render={<Link href={`/${role}/profile`} className="flex items-center gap-2" />}>
                     <UserRound className="size-4" />
-                    {role === 'institution' ? 'Institution details' : 'Profile'}
+                    Profile
                   </DropdownMenuItem>
                   {role !== 'institution' ? (
                     <DropdownMenuItem render={<Link href={`/${other}/dashboard`} className="flex items-center gap-2" />}>

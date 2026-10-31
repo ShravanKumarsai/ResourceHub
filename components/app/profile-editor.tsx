@@ -1,12 +1,13 @@
 'use client'
 
 import Link from 'next/link'
-import { useMemo, useState } from 'react'
+import { useActionState, useEffect, useState } from 'react'
 import {
   BellRing,
   BriefcaseBusiness,
   Building2,
   CheckCircle2,
+  Clock3,
   Mail,
   PencilLine,
   ShieldCheck,
@@ -14,18 +15,12 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 
+import { updateProfileAction, type ProfileActionState } from '@/app/profile/actions'
 import { Avatar } from '@/components/app/avatar'
 import { PageHeader } from '@/components/page-header'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { createClient } from '@/lib/supabase/client'
-import type { Role } from '@/lib/types'
-
-type ProfileDraft = {
-  display_name: string
-  title: string
-  department: string
-}
+import { getInitials } from '@/lib/identity'
 
 type StatCard = {
   label: string
@@ -33,93 +28,50 @@ type StatCard = {
   hint: string
 }
 
+const INITIAL_STATE: ProfileActionState = { status: 'idle', message: '' }
+
 export function ProfileEditor({
-  userId,
-  userEmail,
   initialProfile,
-  role,
+  fallbackName,
   roleLabel,
   institutionName,
   roleNames,
   statCards,
   accountRows,
-  otherRole,
-  otherHref,
+  userEmail,
+  otherWorkspace,
 }: {
-  userId: string
-  userEmail: string
   initialProfile: { display_name: string | null; title: string | null; department: string | null }
-  role: Role
+  fallbackName: string
   roleLabel: string
   institutionName: string
   roleNames: string[]
   statCards: StatCard[]
   accountRows: Array<[string, string]>
-  otherRole: Role
-  otherHref: string
+  userEmail: string
+  otherWorkspace: { label: string; href: string } | null
 }) {
   const [isEditing, setIsEditing] = useState(false)
-  const [draft, setDraft] = useState<ProfileDraft>({
-    display_name: initialProfile.display_name ?? 'Member',
-    title: initialProfile.title ?? '',
-    department: initialProfile.department ?? '',
-  })
-  const [profile, setProfile] = useState(initialProfile)
-  const [saving, setSaving] = useState(false)
+  const [state, formAction, pending] = useActionState(updateProfileAction, INITIAL_STATE)
 
-  const displayName = profile.display_name?.trim() || 'Member'
-  const initials = displayName.slice(0, 2).toUpperCase()
-
-  const memberSummary = useMemo(
-    () => [
-      { label: 'Status', value: roleNames.length ? 'Verified member' : 'Pending review', tone: 'success' },
-      { label: 'Institution', value: institutionName, tone: 'neutral' },
-      { label: 'Role', value: roleLabel, tone: 'neutral' },
-    ],
-    [institutionName, roleLabel, roleNames.length],
-  )
-
-  async function handleSave() {
-    setSaving(true)
-    try {
-      const supabase = createClient()
-      const nextDisplayName = draft.display_name.trim() || 'Member'
-      const nextProfile = {
-        display_name: nextDisplayName,
-        title: draft.title.trim() || null,
-        department: draft.department.trim() || null,
-      }
-
-      const { error: authError } = await supabase.auth.updateUser({
-        data: {
-          display_name: nextDisplayName,
-          full_name: nextDisplayName,
-          name: nextDisplayName,
-        },
-      })
-      if (authError) throw authError
-
-      const { error } = await supabase.from('profiles').update(nextProfile).eq('id', userId)
-      if (error) throw error
-
-      setProfile(nextProfile)
+  useEffect(() => {
+    if (state.status === 'success') {
       setIsEditing(false)
-      toast.success('Profile updated')
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not save the profile.')
-    } finally {
-      setSaving(false)
+      toast.success(state.message)
+    } else if (state.status === 'error' && !state.fieldErrors) {
+      toast.error(state.message)
     }
-  }
+  }, [state])
 
-  function handleCancel() {
-    setDraft({
-      display_name: profile.display_name ?? 'Member',
-      title: profile.title ?? '',
-      department: profile.department ?? '',
-    })
-    setIsEditing(false)
-  }
+  const profile = state.profile ?? initialProfile
+  const displayName = profile.display_name?.trim() || fallbackName
+  const isVerified = roleNames.length > 0
+
+  const memberSummary = [
+    { label: 'Status', value: isVerified ? 'Verified member' : 'Pending review' },
+    { label: 'Institution', value: institutionName },
+    { label: 'Role', value: roleLabel },
+  ]
 
   return (
     <div className="space-y-6">
@@ -133,7 +85,10 @@ export function ProfileEditor({
           <div className="bg-[linear-gradient(135deg,#17324d_0%,#167d8d_100%)] p-5 text-white">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-4">
-                <Avatar initials={initials} className="size-14 border border-white/20 bg-white/10 text-base text-white shadow-inner" />
+                <Avatar
+                  initials={getInitials(displayName)}
+                  className="size-14 border border-white/20 bg-white/10 text-base text-white shadow-inner"
+                />
                 <div>
                   <p className="text-xs font-medium uppercase tracking-[0.12em] text-white/75">{roleLabel}</p>
                   <h2 className="mt-1 text-2xl font-semibold tracking-tight">{displayName}</h2>
@@ -158,7 +113,7 @@ export function ProfileEditor({
               {statCards.map((stat) => (
                 <div key={stat.label} className="rounded-2xl border border-line bg-surface/60 p-3.5">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-muted">{stat.label}</p>
-                  <p className="mt-2 text-2xl font-semibold tracking-tight text-ink">{stat.value}</p>
+                  <p className="mt-2 truncate text-2xl font-semibold tracking-tight text-ink">{stat.value}</p>
                   <p className="mt-1 text-[12px] text-ink-muted">{stat.hint}</p>
                 </div>
               ))}
@@ -175,16 +130,22 @@ export function ProfileEditor({
               </div>
 
               {isEditing ? (
-                <div className="space-y-4 rounded-2xl border border-line bg-surface/40 p-4">
+                <form action={formAction} className="space-y-4 rounded-2xl border border-line bg-surface/40 p-4">
                   <div>
                     <label htmlFor="profile-name" className="mb-1.5 block text-[13px] font-medium text-ink">
                       Full name
                     </label>
                     <Input
                       id="profile-name"
-                      value={draft.display_name}
-                      onChange={(event) => setDraft((current) => ({ ...current, display_name: event.target.value }))}
+                      name="display_name"
+                      defaultValue={profile.display_name ?? ''}
+                      maxLength={120}
+                      required
+                      aria-invalid={Boolean(state.fieldErrors?.display_name)}
                     />
+                    {state.fieldErrors?.display_name ? (
+                      <p role="alert" className="mt-1.5 text-xs text-destructive">{state.fieldErrors.display_name}</p>
+                    ) : null}
                   </div>
                   <div>
                     <label htmlFor="profile-title" className="mb-1.5 block text-[13px] font-medium text-ink">
@@ -192,10 +153,15 @@ export function ProfileEditor({
                     </label>
                     <Input
                       id="profile-title"
-                      value={draft.title}
+                      name="title"
+                      defaultValue={profile.title ?? ''}
                       placeholder="e.g. Research Engineer"
-                      onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
+                      maxLength={160}
+                      aria-invalid={Boolean(state.fieldErrors?.title)}
                     />
+                    {state.fieldErrors?.title ? (
+                      <p role="alert" className="mt-1.5 text-xs text-destructive">{state.fieldErrors.title}</p>
+                    ) : null}
                   </div>
                   <div>
                     <label htmlFor="profile-department" className="mb-1.5 block text-[13px] font-medium text-ink">
@@ -203,29 +169,44 @@ export function ProfileEditor({
                     </label>
                     <Input
                       id="profile-department"
-                      value={draft.department}
+                      name="department"
+                      defaultValue={profile.department ?? ''}
                       placeholder="e.g. Mechanical Engineering"
-                      onChange={(event) => setDraft((current) => ({ ...current, department: event.target.value }))}
+                      maxLength={200}
+                      aria-invalid={Boolean(state.fieldErrors?.department)}
                     />
+                    {state.fieldErrors?.department ? (
+                      <p role="alert" className="mt-1.5 text-xs text-destructive">{state.fieldErrors.department}</p>
+                    ) : null}
                   </div>
 
                   <div className="flex justify-end gap-2 pt-2">
-                    <Button type="button" variant="outline" onClick={handleCancel} disabled={saving}>
+                    <Button type="button" variant="outline" onClick={() => setIsEditing(false)} disabled={pending}>
                       Cancel
                     </Button>
-                    <Button type="button" onClick={handleSave} disabled={saving}>
-                      {saving ? 'Saving…' : 'Save changes'}
+                    <Button type="submit" disabled={pending}>
+                      {pending ? 'Saving…' : 'Save changes'}
                     </Button>
                   </div>
-                </div>
+                </form>
               ) : (
                 <dl className="grid gap-3 md:grid-cols-2">
-                  {accountRows.map(([label, value]) => (
-                    <div key={label} className="rounded-2xl border border-line bg-surface/40 p-3.5">
-                      <dt className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-muted">{label}</dt>
-                      <dd className="mt-2 text-sm font-medium text-ink">{value}</dd>
-                    </div>
-                  ))}
+                  {accountRows.map(([label, value]) => {
+                    const live =
+                      label === 'Full name'
+                        ? displayName
+                        : label === 'Title'
+                          ? profile.title || 'Not set'
+                          : label === 'Department'
+                            ? profile.department || 'Not set'
+                            : value
+                    return (
+                      <div key={label} className="rounded-2xl border border-line bg-surface/40 p-3.5">
+                        <dt className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-muted">{label}</dt>
+                        <dd className="mt-2 text-sm font-medium text-ink">{live}</dd>
+                      </div>
+                    )
+                  })}
                 </dl>
               )}
             </div>
@@ -236,17 +217,24 @@ export function ProfileEditor({
           <section className="surface-panel p-5">
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-base font-semibold text-ink">Membership & verification</h3>
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-status-approved-bg px-2.5 py-1 text-[11px] font-semibold text-status-approved">
-                <CheckCircle2 className="size-3.5" aria-hidden="true" />
-                Active
-              </span>
+              {isVerified ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-status-approved-bg px-2.5 py-1 text-[11px] font-semibold text-status-approved">
+                  <CheckCircle2 className="size-3.5" aria-hidden="true" />
+                  Active
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-status-pending-bg px-2.5 py-1 text-[11px] font-semibold text-status-pending">
+                  <Clock3 className="size-3.5" aria-hidden="true" />
+                  Pending
+                </span>
+              )}
             </div>
 
             <div className="mt-4 space-y-3">
               {memberSummary.map((item) => (
                 <div key={item.label} className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface/50 px-3 py-2.5">
                   <span className="text-sm text-ink-muted">{item.label}</span>
-                  <span className="text-sm font-medium text-ink">{item.value}</span>
+                  <span className="text-right text-sm font-medium text-ink">{item.value}</span>
                 </div>
               ))}
             </div>
@@ -269,9 +257,11 @@ export function ProfileEditor({
               </div>
             </div>
 
-            <Link href={otherHref} className={`${buttonVariants({ variant: 'outline' })} mt-4 w-full`}>
-              Open {otherRole === 'owner' ? 'resource owner' : 'student'} workspace
-            </Link>
+            {otherWorkspace ? (
+              <Link href={otherWorkspace.href} className={`${buttonVariants({ variant: 'outline' })} mt-4 w-full`}>
+                {otherWorkspace.label}
+              </Link>
+            ) : null}
           </section>
 
           <section className="surface-panel p-5">
@@ -286,21 +276,23 @@ export function ProfileEditor({
                   <Mail className="size-4 text-ink-muted" aria-hidden="true" />
                   Email address
                 </div>
-                <span className="text-xs text-ink-muted">{userEmail}</span>
+                <span className="truncate text-xs text-ink-muted">{userEmail}</span>
               </div>
               <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface/50 px-3 py-2.5">
                 <div className="flex items-center gap-2 text-sm text-ink">
                   <Building2 className="size-4 text-ink-muted" aria-hidden="true" />
                   Institution
                 </div>
-                <span className="text-xs text-ink-muted">{institutionName}</span>
+                <span className="truncate text-xs text-ink-muted">{institutionName}</span>
               </div>
               <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface/50 px-3 py-2.5">
                 <div className="flex items-center gap-2 text-sm text-ink">
                   <UserRound className="size-4 text-ink-muted" aria-hidden="true" />
                   Account status
                 </div>
-                <span className="text-xs font-medium text-status-approved">Verified</span>
+                <span className={`text-xs font-medium ${isVerified ? 'text-status-approved' : 'text-status-pending'}`}>
+                  {isVerified ? 'Verified' : 'Pending'}
+                </span>
               </div>
               <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface/50 px-3 py-2.5">
                 <div className="flex items-center gap-2 text-sm text-ink">
