@@ -49,6 +49,7 @@ export async function submitBookingRequest(input: {
   startsAt: string
   endsAt: string
   purpose: string
+  idempotencyKey?: string
 }) {
   const { supabase, user } = await requireWorkspaceRole('student')
 
@@ -109,6 +110,7 @@ export async function submitBookingRequest(input: {
     p_starts_at: input.startsAt,
     p_ends_at: input.endsAt,
     p_purpose: purpose,
+    p_idempotency_key: input.idempotencyKey ?? crypto.randomUUID(),
   })
 
   if (error) {
@@ -125,6 +127,7 @@ export async function reviewBookingRequest(input: {
   bookingId: string
   decision: 'approved' | 'rejected'
   note?: string
+  idempotencyKey?: string
 }) {
   const { supabase, user } = await requireWorkspaceRole('resource_manager')
 
@@ -166,6 +169,7 @@ export async function reviewBookingRequest(input: {
     p_booking_id: input.bookingId,
     p_decision: input.decision,
     p_note: input.note?.trim() || null,
+    p_idempotency_key: input.idempotencyKey ?? crypto.randomUUID(),
   })
 
   if (error) {
@@ -178,7 +182,7 @@ export async function reviewBookingRequest(input: {
   return { ok: true }
 }
 
-export async function cancelBookingRequest(bookingId: string) {
+export async function cancelBookingRequest(bookingId: string, idempotencyKey?: string) {
   const { supabase, user } = await requireWorkspaceRole('student')
 
   if (!UUID_PATTERN.test(bookingId)) {
@@ -200,7 +204,10 @@ export async function cancelBookingRequest(bookingId: string) {
     throw new Error('This booking cannot be cancelled from its current state.')
   }
 
-  const { error } = await supabase.rpc('cancel_resource_booking', { p_booking_id: bookingId })
+  const { error } = await supabase.rpc('cancel_resource_booking', {
+    p_booking_id: bookingId,
+    p_idempotency_key: idempotencyKey ?? crypto.randomUUID(),
+  })
   if (error) {
     throw new Error(toRpcErrorMessage(error))
   }
@@ -216,6 +223,7 @@ export async function recordBookingCondition(input: {
   rating: 'excellent' | 'good' | 'minor_wear' | 'damaged'
   notes: string
   checklist: string[]
+  idempotencyKey?: string
 }) {
   const { supabase, user } = await requireWorkspaceRole('student')
 
@@ -256,6 +264,7 @@ export async function recordBookingCondition(input: {
     p_rating: input.rating,
     p_notes: input.notes.trim() || '',
     p_checklist: input.checklist,
+    p_idempotency_key: input.idempotencyKey ?? crypto.randomUUID(),
   })
 
   if (error) {
@@ -273,6 +282,7 @@ export async function joinWaitingListRequest(input: {
   resourceId: string
   startsAt: string
   endsAt: string
+  idempotencyKey?: string
 }) {
   const { supabase, user } = await requireWorkspaceRole('student')
 
@@ -302,6 +312,7 @@ export async function joinWaitingListRequest(input: {
     p_resource_id: input.resourceId,
     p_starts_at: input.startsAt,
     p_ends_at: input.endsAt,
+    p_idempotency_key: input.idempotencyKey ?? crypto.randomUUID(),
   })
 
   if (error) {

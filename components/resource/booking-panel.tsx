@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Info } from 'lucide-react'
 import { toast } from 'sonner'
 import { joinWaitingListRequest, submitBookingRequest } from '@/app/bookings/actions'
@@ -61,6 +61,8 @@ export function BookingPanel({ resource, bookingsHref }: { resource: Resource; b
   const [touched, setTouched] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isJoiningWaitlist, setIsJoiningWaitlist] = useState(false)
+  const bookingOperationKey = useRef(crypto.randomUUID())
+  const waitingListOperationKey = useRef(crypto.randomUUID())
 
   const today = getTodayIso()
   const duration = durationHours(start, end)
@@ -97,6 +99,7 @@ export function BookingPanel({ resource, bookingsHref }: { resource: Resource; b
         resourceId: resource.id,
         startsAt: new Date(`${date}T${start}:00Z`).toISOString(),
         endsAt: new Date(`${date}T${end}:00Z`).toISOString(),
+        idempotencyKey: waitingListOperationKey.current,
       })
       toast.success(`Added to waiting list · reference ${entryId.slice(0, 8)}`)
     } catch (error) {
@@ -118,6 +121,7 @@ export function BookingPanel({ resource, bookingsHref }: { resource: Resource; b
         startsAt: new Date(`${date}T${start}:00Z`).toISOString(),
         endsAt: new Date(`${date}T${end}:00Z`).toISOString(),
         purpose: purpose.trim(),
+        idempotencyKey: bookingOperationKey.current,
       })
 
       const nextStatus: Booking['status'] = resource.approval === 'Automatic confirmation' ? 'approved' : 'pending'
