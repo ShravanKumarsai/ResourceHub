@@ -1,14 +1,10 @@
 import type { Metadata } from 'next'
-import { WorkspaceDemoNotice } from '@/components/app/workspace-demo-notice'
 import { IncidentsView } from '@/components/app/incidents-view'
+import { getIncidentResources, getOperationalIncidents } from '@/lib/queries/operational'
 
 export const metadata: Metadata = { title: 'Incident management' }
 
-export default function Page() {
-  return (
-    <>
-      <WorkspaceDemoNotice />
-      <IncidentsView role="owner" />
-    </>
-  )
+export default async function Page() {
+  const [incidents, resources] = await Promise.all([getOperationalIncidents('owner'), getIncidentResources('owner')])
+  return <IncidentsView role="owner" incidents={incidents} resources={resources} />
 }
