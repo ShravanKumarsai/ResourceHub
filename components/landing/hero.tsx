@@ -1,6 +1,7 @@
 import Image from 'next/image'
 import { CheckCircle2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
+import { getOptionalSupabaseConfig } from '@/lib/supabase/config'
 import { HeroSearch } from './hero-search'
 
 function formatCount(value: number | null | undefined) {
@@ -14,6 +15,15 @@ function formatPercent(value: number | null | undefined) {
 }
 
 async function getLandingStats() {
+  if (!getOptionalSupabaseConfig()) {
+    return [
+      { label: 'Participating institutions', value: 'Unavailable' },
+      { label: 'Resource categories', value: 'Unavailable' },
+      { label: 'Bookings completed', value: 'Unavailable' },
+      { label: 'Resources returned in good condition', value: 'Unavailable' },
+    ]
+  }
+
   const supabase = await createClient()
 
   const [institutionsResult, categoriesResult, completedBookingsResult, checkInReportsResult] =
