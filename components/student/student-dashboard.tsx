@@ -1,8 +1,10 @@
 import Link from 'next/link'
 import { ArrowRight, CalendarCheck, Clock, FlaskConical, Search, ShieldAlert } from 'lucide-react'
-import { EmptyState, PageHeader, SectionCard } from '@/components/page-header'
+import { EmptyState, SectionCard } from '@/components/page-header'
 import { buttonVariants } from '@/components/ui/button'
+import { DashboardQueryError } from '@/components/dashboard/dashboard-state'
 import { requireWorkspaceRole } from '@/lib/auth/workspace'
+import { logSupabaseError } from '@/lib/supabase/dev-error'
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return '—'
@@ -46,6 +48,11 @@ export async function StudentDashboard() {
       .limit(3),
   ])
 
+  if (profileResult.error) logSupabaseError('Loading student dashboard profile failed', profileResult.error)
+  if (bookingsResult.error) logSupabaseError('Loading student dashboard bookings failed', bookingsResult.error)
+  if (incidentsResult.error) logSupabaseError('Loading student dashboard incidents failed', incidentsResult.error)
+  if (resourcesResult.error) logSupabaseError('Loading student dashboard resources failed', resourcesResult.error)
+
   const profileName = profileResult.data?.display_name?.trim() || user.email?.split('@')[0] || 'Student'
   const bookings = bookingsResult.data ?? []
   const incidents = incidentsResult.data ?? []
@@ -60,10 +67,10 @@ export async function StudentDashboard() {
   const openIncidents = incidents.filter((incident) => incident.status !== 'resolved').length
 
   const statCards = [
-    { label: 'Upcoming sessions', value: upcoming.length, detail: 'Approved and pending', tone: 'bg-navy text-white' },
-    { label: 'Awaiting approval', value: pendingCount, detail: 'Owner decisions pending', tone: 'bg-status-pending-bg text-status-pending' },
-    { label: 'Currently in use', value: activeCount, detail: 'Checked out to you', tone: 'bg-status-approved-bg text-status-approved' },
-    { label: 'Open incidents', value: openIncidents, detail: 'Reported by you', tone: 'bg-surface text-navy' },
+    { label: 'Upcoming sessions', value: bookingsResult.error ? '—' : upcoming.length, detail: bookingsResult.error ? 'Booking data is unavailable.' : 'Approved and pending', tone: 'bg-navy text-white' },
+    { label: 'Awaiting approval', value: bookingsResult.error ? '—' : pendingCount, detail: bookingsResult.error ? 'Booking data is unavailable.' : 'Owner decisions pending', tone: 'bg-status-pending-bg text-status-pending' },
+    { label: 'Currently in use', value: bookingsResult.error ? '—' : activeCount, detail: bookingsResult.error ? 'Booking data is unavailable.' : 'Checked out to you', tone: 'bg-status-approved-bg text-status-approved' },
+    { label: 'Open incidents', value: incidentsResult.error ? '—' : openIncidents, detail: incidentsResult.error ? 'Incident data is unavailable.' : 'Reported by you', tone: 'bg-surface text-navy' },
   ]
 
   return (
@@ -86,6 +93,16 @@ export async function StudentDashboard() {
         </div>
       </div>
 
+      {profileResult.error ? (
+        <DashboardQueryError title="Your profile could not be loaded" />
+      ) : null}
+      {bookingsResult.error ? (
+        <DashboardQueryError title="Your bookings could not be loaded" />
+      ) : null}
+      {incidentsResult.error ? (
+        <DashboardQueryError title="Your incident summary could not be loaded" />
+      ) : null}
+
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {statCards.map((card) => (
           <article key={card.label} className="surface-panel p-4">
@@ -105,7 +122,9 @@ export async function StudentDashboard() {
 
       <div className="grid gap-6 xl:grid-cols-[1fr_380px]">
         <SectionCard title="Upcoming bookings" actions={<Link href="/student/bookings" className="text-teal text-[13px] font-medium hover:underline">View all</Link>}>
-          {upcoming.length ? (
+          {bookingsResult.error ? (
+            <p className="text-ink-muted text-sm">Upcoming bookings are unavailable until the query succeeds.</p>
+          ) : upcoming.length ? (
             <ul className="space-y-3">
               {upcoming.slice(0, 5).map((booking) => {
                 const resource = booking.resources as { name?: string; location?: string } | null
@@ -157,7 +176,9 @@ export async function StudentDashboard() {
       </div>
 
       <SectionCard title="Available to book">
-        {resourcesResult.data && resourcesResult.data.length ? (
+        {resourcesResult.error ? (
+          <DashboardQueryError title="Available resources could not be loaded" />
+        ) : resourcesResult.data && resourcesResult.data.length ? (
           <div className="grid gap-3 md:grid-cols-3">
             {resourcesResult.data.map((resource) => (
               <div key={resource.id} className="rounded-lg border border-line bg-surface p-4">

@@ -1,24 +1,42 @@
+import { Suspense } from 'react'
 import { Hero } from '@/components/landing/hero'
 import {
   About,
-  CategoryGrid,
-  FeaturedResources,
   FinalCta,
   ForInstitutions,
   Governance,
   HowItWorks,
+  LiveResourceShowcase,
+  ResourceShowcaseLoading,
 } from '@/components/landing/sections'
 
 export default function LandingPage() {
   return (
     <>
-      <Hero />
-      <CategoryGrid />
-      <FeaturedResources />
+      <Suspense
+        fallback={
+          <div className="container-page py-12 text-sm text-ink-muted" aria-busy="true">
+            Loading homepage…
+          </div>
+        }
+      >
+        <Hero />
+      </Suspense>
+      <Suspense fallback={<ResourceShowcaseLoading />}>
+        <LiveResourceShowcase />
+      </Suspense>
       <HowItWorks />
       <Governance />
       <ForInstitutions />
-      <About />
+      <Suspense
+        fallback={
+          <div className="container-page py-12 text-sm text-ink-muted" aria-busy="true">
+            Loading institution directory…
+          </div>
+        }
+      >
+        <About />
+      </Suspense>
       <FinalCta />
     </>
   )

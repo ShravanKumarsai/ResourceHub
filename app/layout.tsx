@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { StoreProvider } from '@/lib/store'
 import './globals.css'
 
 const sans = Geist({ subsets: ['latin'], variable: '--font-sans-stack' })
@@ -28,10 +27,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${sans.variable} ${mono.variable} bg-white`}>
       <body className="min-h-dvh font-sans antialiased">
         <TooltipProvider>
-          <StoreProvider>
-            {children}
-            <Toaster position="top-right" />
-          </StoreProvider>
+          {children}
+          <Toaster position="top-right" />
         </TooltipProvider>
       </body>
     </html>

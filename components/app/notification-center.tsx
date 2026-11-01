@@ -1,7 +1,9 @@
 import { Bell, CheckCheck } from 'lucide-react'
 import { NotificationList, type NotificationItem } from '@/components/app/notification-list'
+import { NotificationDeliverySettings } from '@/components/app/notification-delivery-settings'
 import { requireInstitutionAdmin } from '@/lib/auth/institution-admin'
 import { requireWorkspaceRole } from '@/lib/auth/workspace'
+import { getNotificationDeliveryReadiness } from '@/lib/notifications/config'
 import type { Role } from '@/lib/types'
 
 export async function NotificationCenter({ role }: { role: Role }) {
@@ -19,6 +21,13 @@ export async function NotificationCenter({ role }: { role: Role }) {
 
   if (error) throw error
 
+  const { data: preferences } = await supabase
+    .from('notification_preferences')
+    .select('email_enabled, push_enabled')
+    .eq('user_id', user.id)
+    .maybeSingle()
+  const readiness = getNotificationDeliveryReadiness()
+
   return (
     <div className="space-y-6">
       <div>
@@ -31,6 +40,12 @@ export async function NotificationCenter({ role }: { role: Role }) {
           Booking updates and decisions about your institutional access appear here.
         </p>
       </div>
+      <NotificationDeliverySettings
+        emailEnabled={preferences?.email_enabled ?? false}
+        pushEnabled={preferences?.push_enabled ?? false}
+        emailAvailable={readiness.emailAvailable}
+        pushAvailable={readiness.pushAvailable}
+      />
       <section aria-label="Notification messages" className="surface-panel overflow-hidden">
         {(data ?? []).length ? (
           <NotificationList items={(data ?? []) as NotificationItem[]} />

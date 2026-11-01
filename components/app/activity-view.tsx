@@ -34,18 +34,25 @@ type ActivityEvent = Awaited<ReturnType<typeof loadActivityPage>>['events'][numb
 
 export function ActivityView({ role }: { role: ActivityRole }) {
   const [events, setEvents] = useState<ActivityEvent[]>([])
-  const [page, setPage] = useState(0)
+  const [cursor, setCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  async function loadPage(nextPage: number, append: boolean) {
+  async function loadPage(nextCursor: string | null, append: boolean) {
     try {
       setError(null)
-      const result = await loadActivityPage(role, nextPage)
-      setEvents((current) => append ? [...current, ...result.events] : result.events)
-      setPage(nextPage)
+      const result = await loadActivityPage(role, nextCursor)
+      setEvents((current) => {
+        if (!append) return result.events
+        const existingIds = new Set(current.map((event) => event.id))
+        return [
+          ...current,
+          ...result.events.filter((event) => !existingIds.has(event.id)),
+        ]
+      })
+      setCursor(result.nextCursor)
       setHasMore(result.hasMore)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Activity history could not be loaded.')
@@ -57,14 +64,15 @@ export function ActivityView({ role }: { role: ActivityRole }) {
 
   useEffect(() => {
     setEvents([])
-    setPage(0)
+    setCursor(null)
+    setHasMore(false)
     setLoading(true)
-    void loadPage(0, false)
+    void loadPage(null, false)
   }, [role])
 
   const loadMore = () => {
     setLoadingMore(true)
-    void loadPage(page + 1, true)
+    void loadPage(cursor, true)
   }
 
   return (
@@ -85,7 +93,7 @@ export function ActivityView({ role }: { role: ActivityRole }) {
       ) : error && !events.length ? (
         <div role="alert" className="space-y-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           <p>{error}</p>
-          <Button variant="outline" onClick={() => { setLoading(true); void loadPage(0, false) }}>
+          <Button variant="outline" onClick={() => { setLoading(true); void loadPage(null, false) }}>
             Retry
           </Button>
         </div>

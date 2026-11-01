@@ -286,8 +286,8 @@ function IncidentCard({
       <p className="mt-3 whitespace-pre-wrap text-sm leading-6">{incident.description}</p>
 
       <ol className="border-line-muted mt-4 space-y-2 border-l pl-4">
-        {incident.history.map((event, index) => (
-          <li key={`${event.at}-${index}`} className="text-[13px]">
+        {incident.history.map((event) => (
+          <li key={event.id} className="text-[13px]">
             <span className="font-medium">{event.by}</span>
             <span className="text-ink-muted"> · {formatDateTime(event.at)}</span>
             <p className="text-ink-muted">{event.text}</p>
@@ -339,19 +339,64 @@ function IncidentCard({
 export function IncidentsView({ role }: { role: 'owner' | 'student' | 'institution' }) {
   const [workspace, setWorkspace] = useState<IncidentWorkspaceData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [paginationError, setPaginationError] = useState<string | null>(null)
+  const [cursor, setCursor] = useState<string | null>(null)
+  const [hasMore, setHasMore] = useState(false)
   const [filter, setFilter] = useState<'all' | IncidentStatus>('all')
   const [reporting, setReporting] = useState(false)
 
   async function refresh() {
     try {
       setError(null)
-      const result = await loadIncidentWorkspace(role)
+      setPaginationError(null)
+      const result = await loadIncidentWorkspace(role, null)
       setWorkspace(result)
+      setCursor(result.nextCursor)
+      setHasMore(result.hasMore)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Incident records could not be loaded.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function loadMore() {
+    if (!cursor || !hasMore || loadingMore) return
+    setLoadingMore(true)
+    setPaginationError(null)
+    try {
+      const result = await loadIncidentWorkspace(role, cursor)
+      setWorkspace((current) => {
+        if (!current) return result
+        const existingIds = new Set(current.incidents.map((incident) => incident.id))
+        return {
+          ...result,
+          resources: [
+            ...new Map(
+              [...current.resources, ...result.resources].map((resource) => [resource.id, resource]),
+            ).values(),
+          ],
+          bookings: [
+            ...new Map(
+              [...current.bookings, ...result.bookings].map((booking) => [booking.id, booking]),
+            ).values(),
+          ],
+          incidents: [
+            ...current.incidents,
+            ...result.incidents.filter((incident) => !existingIds.has(incident.id)),
+          ],
+        }
+      })
+      setCursor(result.nextCursor)
+      setHasMore(result.hasMore)
+    } catch (loadError) {
+      setPaginationError(
+        loadError instanceof Error ? loadError.message : 'More incident records could not be loaded.',
+      )
+    } finally {
+      setLoadingMore(false)
     }
   }
 
@@ -417,9 +462,11 @@ export function IncidentsView({ role }: { role: 'owner' | 'student' | 'instituti
                 }
               >
                 {value === 'all' ? 'All' : INCIDENT_STATUS_LABEL[value]}
-                <span className="ml-1.5 opacity-70">
-                  {value === 'all' ? incidents.length : incidents.filter((incident) => incident.status === value).length}
-                </span>
+                {!hasMore ? (
+                  <span className="ml-1.5 opacity-70">
+                    {value === 'all' ? incidents.length : incidents.filter((incident) => incident.status === value).length}
+                  </span>
+                ) : null}
               </button>
             ))}
           </div>
@@ -440,15 +487,39 @@ export function IncidentsView({ role }: { role: 'owner' | 'student' | 'instituti
             <SectionCard>
               <EmptyState
                 icon={ShieldCheck}
-                title={filter === 'all' ? 'No incidents here' : `No ${INCIDENT_STATUS_LABEL[filter].toLowerCase()} incidents`}
+                title={
+                  hasMore
+                    ? 'No matching incidents on this page'
+                    : filter === 'all'
+                      ? 'No incidents here'
+                      : `No ${INCIDENT_STATUS_LABEL[filter].toLowerCase()} incidents`
+                }
                 description={
-                  incidents.length
-                    ? 'No records match this status filter.'
-                    : 'Incident reports created for resources in your permitted scope will appear here.'
+                  hasMore
+                    ? 'Load more records to continue searching this status filter.'
+                    : incidents.length
+                      ? 'No records match this status filter.'
+                      : 'Incident reports created for resources in your permitted scope will appear here.'
                 }
               />
             </SectionCard>
           )}
+
+          {paginationError ? (
+            <div role="alert" className="space-y-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              <p>{paginationError}</p>
+              <Button variant="outline" onClick={() => void loadMore()} disabled={loadingMore}>
+                Retry loading incidents
+              </Button>
+            </div>
+          ) : null}
+          {hasMore ? (
+            <div className="flex justify-center">
+              <Button variant="outline" onClick={() => void loadMore()} disabled={loadingMore}>
+                {loadingMore ? 'Loading…' : 'Load more'}
+              </Button>
+            </div>
+          ) : null}
         </>
       )}
 

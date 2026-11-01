@@ -6,8 +6,6 @@ import {
   Building2,
   CalendarDays,
   Check,
-  ChevronDown,
-  CircleHelp,
   Clock3,
   LayoutDashboard,
   LockKeyhole,
@@ -22,6 +20,12 @@ import {
   type PendingApplicant,
 } from '@/components/institution/membership-review-section'
 import { InstitutionNameForm } from '@/components/institution/institution-name-form'
+import { InstitutionOperations } from '@/components/institution/institution-operations'
+import type {
+  InstitutionBookingEntry,
+  InstitutionResourceEntry,
+} from '@/lib/institution/dashboard-queries'
+import { DashboardQueryError } from '@/components/dashboard/dashboard-state'
 
 interface Institution {
   id: string
@@ -35,7 +39,11 @@ interface InstitutionDashboardProps {
   email: string
   membershipCounts: { active: number; pending: number } | null
   resourceCount: number | null
+  resources: InstitutionResourceEntry[]
+  resourcesLoadError: boolean
   bookingCount: number | null
+  bookings: InstitutionBookingEntry[]
+  bookingsLoadError: boolean
   openIncidentCount: number | null
   pendingApplicants: PendingApplicant[] | null
   applicantLoadError: boolean
@@ -108,43 +116,16 @@ function MetricCard({
   )
 }
 
-function NotConfiguredCard({
-  title,
-  detail,
-  icon: Icon,
-}: {
-  title: string
-  detail: string
-  icon: typeof PackageOpen
-}) {
-  return (
-    <div className="flex flex-col items-start gap-4 rounded-2xl border border-dashed border-line bg-canvas/80 p-5 sm:flex-row sm:items-center">
-      <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-white text-ink-muted shadow-sm">
-        <Icon className="size-5" aria-hidden="true" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <h3 className="font-semibold">{title}</h3>
-          <span className="rounded-full bg-surface px-2.5 py-1 text-[10px] font-semibold tracking-wide text-ink-muted uppercase">
-            Not connected
-          </span>
-        </div>
-        <p className="text-ink-muted mt-1 text-sm leading-6">{detail}</p>
-      </div>
-      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-muted">
-        <LockKeyhole className="size-3.5" aria-hidden="true" />
-        Setup required
-      </span>
-    </div>
-  )
-}
-
 export function InstitutionDashboard({
   institution,
   email,
   membershipCounts,
   resourceCount,
+  resources,
+  resourcesLoadError,
   bookingCount,
+  bookings,
+  bookingsLoadError,
   openIncidentCount,
   pendingApplicants,
   applicantLoadError,
@@ -174,7 +155,7 @@ export function InstitutionDashboard({
               <p className="text-[11px] font-semibold tracking-[0.14em] text-white/65 uppercase">Institution overview</p>
               <h2 className="mt-3 text-2xl font-semibold tracking-tight sm:text-[28px]">{institution.name}</h2>
               <p className="mt-2 max-w-xl text-sm leading-6 text-white/75">
-                Your institution identity is connected. Resource and booking management will appear when their database workflows are available.
+                Review institution-scoped bookings and the resources visible to your account under the existing database permissions.
               </p>
             </div>
             <div className="flex size-16 shrink-0 items-center justify-center self-start rounded-2xl border border-white/20 bg-white/10 sm:size-[76px] sm:self-center">
@@ -198,14 +179,11 @@ export function InstitutionDashboard({
         </div>
 
         {membershipCounts === null ? (
-          <div role="alert" className="mt-6 flex items-start gap-3 rounded-2xl border border-status-pending/25 bg-status-pending-bg p-4 text-status-pending">
-            <CircleHelp className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
-            <div>
-              <p className="text-sm font-semibold">Membership totals could not be loaded</p>
-              <p className="mt-1 text-xs leading-5">
-                Your administrator access was verified, but the institution-scoped membership query failed. Refresh the page to try again.
-              </p>
-            </div>
+          <div className="mt-6">
+            <DashboardQueryError
+              title="Membership totals could not be loaded"
+              description="Your administrator access was verified, but the institution-scoped membership query failed."
+            />
           </div>
         ) : null}
 
@@ -224,16 +202,16 @@ export function InstitutionDashboard({
             icon={Clock3}
           />
           <MetricCard
-            label="Resources"
+          label="Accessible resources"
             value={resourceCount === null ? '—' : resourceCount}
-            detail={resourceCount === null ? 'Unable to load resource inventory.' : resourceCount === 0 ? 'No resource records in this institution yet.' : 'Resources published in the connected workspace.'}
+          detail={resourceCount === null ? 'Unable to load resources visible under current access rules.' : resourceCount === 0 ? 'No resources are visible under current access rules.' : 'Listed resources and any resources you personally own.'}
             icon={PackageOpen}
             unavailable={resourceCount === null}
           />
           <MetricCard
             label="Bookings"
             value={bookingCount === null ? '—' : bookingCount}
-            detail={bookingCount === null ? 'Unable to load booking activity.' : bookingCount === 0 ? 'No booking records yet.' : 'Booking records in the connected workspace.'}
+            detail={bookingCount === null ? 'Unable to load institution booking activity.' : bookingCount === 0 ? 'No booking records yet.' : 'Read-only institution booking records.'}
             icon={CalendarDays}
             unavailable={bookingCount === null}
           />
@@ -242,39 +220,14 @@ export function InstitutionDashboard({
 
       <div className="mt-10 grid gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(280px,0.85fr)]">
         <div className="space-y-6">
-          <section id="resources" className="scroll-mt-24 rounded-2xl border border-line bg-white p-5 shadow-[0_8px_24px_-22px_rgba(16,37,56,0.5)] sm:p-6">
-            <div className="mb-5 flex items-start justify-between gap-4">
-              <div>
-                <p className="eyebrow">RESOURCE MANAGEMENT</p>
-                <h2 className="mt-1.5 text-lg font-semibold">Institution resources</h2>
-              </div>
-              <span className="flex size-10 items-center justify-center rounded-xl bg-surface text-navy">
-                <PackageOpen className="size-5" aria-hidden="true" />
-              </span>
-            </div>
-            <NotConfiguredCard
-              title="Resource inventory is not connected"
-              detail="The deployed database currently contains identity and membership tables, but no resource, ownership, or availability tables. No demo resources are shown here."
-              icon={PackageOpen}
-            />
-          </section>
-
-          <section id="bookings" className="scroll-mt-24 rounded-2xl border border-line bg-white p-5 shadow-[0_8px_24px_-22px_rgba(16,37,56,0.5)] sm:p-6">
-            <div className="mb-5 flex items-start justify-between gap-4">
-              <div>
-                <p className="eyebrow">BOOKING MANAGEMENT</p>
-                <h2 className="mt-1.5 text-lg font-semibold">Requests and schedules</h2>
-              </div>
-              <span className="flex size-10 items-center justify-center rounded-xl bg-surface text-navy">
-                <CalendarDays className="size-5" aria-hidden="true" />
-              </span>
-            </div>
-            <NotConfiguredCard
-              title="Booking workflows are not connected"
-              detail="There are no booking, approval, or waitlist tables in the deployed schema. Booking actions are intentionally unavailable."
-              icon={CalendarDays}
-            />
-          </section>
+          <InstitutionOperations
+            resources={resources}
+            resourceCount={resourceCount}
+            resourcesLoadError={resourcesLoadError}
+            bookings={bookings}
+            bookingCount={bookingCount}
+            bookingsLoadError={bookingsLoadError}
+          />
 
           <section id="memberships" className="scroll-mt-24 rounded-2xl border border-line bg-white p-5 shadow-[0_8px_24px_-22px_rgba(16,37,56,0.5)] sm:p-6">
             <div className="mb-5 flex items-start justify-between gap-4">
@@ -306,7 +259,7 @@ export function InstitutionDashboard({
               </div>
             ) : (
               <p className="rounded-xl border border-line-muted bg-canvas p-4 text-sm text-ink-muted">
-                Membership counts are temporarily unavailable. Please refresh to retry.
+                Membership counts are temporarily unavailable. Use the retry control above.
               </p>
             )}
             <div className="mt-5">
@@ -338,6 +291,11 @@ export function InstitutionDashboard({
               <span className="text-ink-muted">Open incidents</span>
               <span className="font-semibold text-ink">{openIncidentCount === null ? '—' : openIncidentCount}</span>
             </div>
+            {openIncidentCount === null ? (
+              <div className="mt-3">
+                <DashboardQueryError title="Open incident count could not be loaded" />
+              </div>
+            ) : null}
             <Link href="/auth/status" className="mt-4 inline-flex items-center gap-2 text-xs font-semibold text-teal hover:underline">
               View account status <ArrowRight className="size-3.5" aria-hidden="true" />
             </Link>
@@ -346,7 +304,7 @@ export function InstitutionDashboard({
           <div className="flex items-start gap-3 rounded-2xl border border-line bg-surface/70 p-4">
             <ArrowDownRight className="mt-0.5 size-4 shrink-0 text-ink-muted" aria-hidden="true" />
             <p className="text-ink-muted text-xs leading-5">
-              As database capabilities are reviewed and enabled, these sections can be connected without changing the existing demo workflows.
+              Institution administrators can view authorized listings and booking records here. Existing database permissions do not grant administrators resource edits, booking decisions, or condition-report access.
             </p>
           </div>
         </div>

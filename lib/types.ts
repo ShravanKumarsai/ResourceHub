@@ -42,9 +42,10 @@ export interface Resource {
   safety: string[]
   useCases: string[]
   instructions: string[]
-  ownerId: string
+  ownerId?: string
   ownerName: string
   listed: boolean
+  archivedAt?: string | null
 }
 
 export interface ResourceOwnerMembership {

@@ -2,7 +2,11 @@ import type { Metadata } from 'next'
 import { Suspense } from 'react'
 import { ResourceCatalogue } from '@/components/explore/resource-catalogue'
 import { PageHeader } from '@/components/page-header'
-import { listActiveInstitutionNames, listListedResources } from '@/lib/resources/queries'
+import {
+  listActiveInstitutionNames,
+  listListedResources,
+  listMyFavoriteResourceIds,
+} from '@/lib/resources/queries'
 
 export const metadata: Metadata = {
   title: 'Explore resources',
@@ -11,9 +15,10 @@ export const metadata: Metadata = {
 }
 
 export default async function ExplorePage() {
-  const [resources, institutions] = await Promise.all([
+  const [resources, institutions, savedResourceIds] = await Promise.all([
     listListedResources(),
     listActiveInstitutionNames(),
+    listMyFavoriteResourceIds(),
   ])
   return (
     <div className="container-page py-10 lg:py-14">
@@ -23,7 +28,12 @@ export default async function ExplorePage() {
       />
       <div className="mt-8">
         <Suspense fallback={<div className="text-ink-muted text-sm">Loading resources…</div>}>
-          <ResourceCatalogue basePath="/resources" resources={resources} institutions={institutions} />
+          <ResourceCatalogue
+            basePath="/resources"
+            resources={resources}
+            institutions={institutions}
+            savedResourceIds={savedResourceIds}
+          />
         </Suspense>
       </div>
     </div>

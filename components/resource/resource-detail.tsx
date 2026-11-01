@@ -6,6 +6,7 @@ import { EmptyState, SectionCard } from '@/components/page-header'
 import { ResourceImage } from '@/components/resource/resource-image'
 import { AvailabilityBadge } from '@/components/status-badge'
 import { buttonVariants } from '@/components/ui/button'
+import { FavoriteButton } from '@/components/resource/favorite-button'
 import { BookingPanel, PublicBookingCard } from '@/components/resource/booking-panel'
 import { formatPrice } from '@/lib/format'
 import type { Resource } from '@/lib/types'
@@ -84,6 +85,12 @@ export function ResourceDetail({
                 <UserRound className="size-4" aria-hidden="true" />
                 {resource.ownerName}
               </span>
+              <FavoriteButton resourceId={resource.id} />
+              {mode === 'student' ? (
+                <Link href="/student/saved" className="text-teal font-medium hover:underline">
+                  View saved resources
+                </Link>
+              ) : null}
             </div>
           </div>
 

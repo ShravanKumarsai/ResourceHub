@@ -18,6 +18,12 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 const INCIDENT_SEVERITIES: IncidentSeverity[] = ['low', 'medium', 'high', 'critical']
 const INCIDENT_STATUSES: IncidentStatus[] = ['open', 'investigating', 'resolved']
 const INCIDENT_PAGE_SIZE = 50
+const TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/
+
+type IncidentCursor = {
+  createdAt: string
+  id: string
+}
 
 function workspaceForRole(role: unknown): IncidentViewRole {
   if (role === 'student' || role === 'owner' || role === 'institution') return role
@@ -52,10 +58,40 @@ function incidentEventText(
   return `Status changed from ${fromStatus} to ${toStatus}.`
 }
 
+function decodeIncidentCursor(value: unknown): IncidentCursor | null {
+  if (value === null || value === undefined) return null
+  if (typeof value !== 'string' || value.length > 512) {
+    throw new Error('The incident cursor is invalid.')
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(decodeURIComponent(value))
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      !('createdAt' in parsed) ||
+      !('id' in parsed) ||
+      typeof parsed.createdAt !== 'string' ||
+      !TIMESTAMP_PATTERN.test(parsed.createdAt) ||
+      !Number.isFinite(Date.parse(parsed.createdAt)) ||
+      typeof parsed.id !== 'string' ||
+      !UUID_PATTERN.test(parsed.id)
+    ) {
+      throw new Error('The incident cursor is invalid.')
+    }
+
+    return { createdAt: parsed.createdAt, id: parsed.id }
+  } catch {
+    throw new Error('The incident cursor is invalid.')
+  }
+}
+
 export async function loadIncidentWorkspace(
   requestedRole: unknown,
+  requestedCursor: unknown = null,
 ): Promise<IncidentWorkspaceData> {
   const role = workspaceForRole(requestedRole)
+  const cursor = decodeIncidentCursor(requestedCursor)
   const { supabase, user, institutionId } = await requireIncidentWorkspace(role)
 
   let incidentQuery = supabase
@@ -66,14 +102,21 @@ export async function loadIncidentWorkspace(
   if (role === 'institution' && institutionId) {
     incidentQuery = incidentQuery.eq('institution_id', institutionId)
   }
+  if (cursor) {
+    incidentQuery = incidentQuery.or(
+      `created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`,
+    )
+  }
   const incidentResult = await incidentQuery
     .order('created_at', { ascending: false })
     .order('id', { ascending: false })
-    .limit(INCIDENT_PAGE_SIZE)
+    .limit(INCIDENT_PAGE_SIZE + 1)
 
   if (incidentResult.error) throw incidentResult.error
 
-  const incidentRows = incidentResult.data ?? []
+  const fetchedIncidentRows = incidentResult.data ?? []
+  const incidentRows = fetchedIncidentRows.slice(0, INCIDENT_PAGE_SIZE)
+  const hasMore = fetchedIncidentRows.length > INCIDENT_PAGE_SIZE
   const incidentIds = incidentRows.map((incident) => incident.id)
   const relatedResourceIds = [
     ...new Set(incidentRows.map((incident) => incident.resource_id)),
@@ -82,9 +125,10 @@ export async function loadIncidentWorkspace(
   const eventResult = incidentIds.length
     ? await supabase
         .from('incident_events')
-        .select('incident_id, actor_id, from_status, to_status, note, created_at')
+        .select('id, incident_id, actor_id, from_status, to_status, note, created_at')
         .in('incident_id', incidentIds)
         .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
     : { data: [], error: null }
 
   if (eventResult.error) throw eventResult.error
@@ -164,6 +208,7 @@ export async function loadIncidentWorkspace(
   for (const event of eventResult.data ?? []) {
     const history = historyByIncident.get(event.incident_id) ?? []
     history.push({
+      id: event.id,
       at: event.created_at,
       by: labelActor(event.actor_id, user.id),
       text: incidentEventText(
@@ -194,6 +239,13 @@ export async function loadIncidentWorkspace(
       name: resourceNames.get(resource.id) ?? resource.name,
     })),
     bookings: reportBookings,
+    hasMore,
+    nextCursor: hasMore && incidentRows.length
+      ? encodeURIComponent(JSON.stringify({
+          createdAt: incidentRows[incidentRows.length - 1].created_at,
+          id: incidentRows[incidentRows.length - 1].id,
+        } satisfies IncidentCursor))
+      : null,
   }
 }
 

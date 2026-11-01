@@ -118,11 +118,14 @@ the last-active-administrator invariant, and institution-scoped audit events.
 New `institution_admin` privileges remain reserved for trusted operator
 provisioning or the existing administrator-transfer procedure.
 
-Student and Resource Manager route layouts now verify an active membership
-and exact approved role on the server. A workspace selection or requested role
-cannot grant access. The resource, booking, incident, and activity interfaces
-still use sample data in browser localStorage; they are visibly labeled
-demo-only and are not represented as Supabase-backed workflows.
+Student and Resource Manager route layouts verify an active membership and
+exact approved role on the server. A workspace selection or requested role
+cannot grant access. Resource, booking, handover, incident, activity, and
+in-app notification workflows now use Supabase-backed operations with
+server-side and database authorization. Availability and waiting-list controls,
+resource archiving/favourites, and outbound email/push delivery depend on
+their later migrations; do not treat them as enabled until those migrations
+are reconciled and applied to the intended database.
 
 The new migration has not been applied to Supabase. Run the existing
 [`membership_review_workflow.test.sql`](../tests/membership_review_workflow.test.sql)

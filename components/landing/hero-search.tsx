@@ -6,10 +6,9 @@ import { Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
-import { INSTITUTIONS } from '@/lib/data'
 import { CATEGORIES } from '@/lib/types'
 
-export function HeroSearch() {
+export function HeroSearch({ institutions }: { institutions: string[] }) {
   const router = useRouter()
   const [q, setQ] = useState('')
   const [category, setCategory] = useState('')
@@ -66,9 +65,9 @@ export function HeroSearch() {
           onChange={(e) => setInstitution(e.target.value)}
         >
           <option value="">All institutions</option>
-          {INSTITUTIONS.map((i) => (
-            <option key={i} value={i}>
-              {i}
+          {institutions.map((institution) => (
+            <option key={institution} value={institution}>
+              {institution}
             </option>
           ))}
         </NativeSelect>

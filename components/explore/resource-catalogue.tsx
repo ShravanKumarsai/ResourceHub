@@ -146,11 +146,14 @@ export function ResourceCatalogue({
   basePath,
   resources,
   institutions,
+  savedResourceIds = [],
 }: {
   basePath: string
   resources: Resource[]
   institutions: string[]
+  savedResourceIds?: string[]
 }) {
+  const savedResourceIdSet = useMemo(() => new Set(savedResourceIds), [savedResourceIds])
   const params = useSearchParams()
   const [filters, setFilters] = useState<Filters>(() => {
     const category = params.get('category')
@@ -316,7 +319,13 @@ export function ResourceCatalogue({
         ) : (
           <div className="mt-5 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
             {results.map((r) => (
-              <ResourceCard key={r.id} resource={r} href={`${basePath}/${r.id}`} />
+              <ResourceCard
+                key={r.id}
+                resource={r}
+                href={`${basePath}/${r.id}`}
+                showFavorite
+                initialSaved={savedResourceIdSet.has(r.id)}
+              />
             ))}
           </div>
         )}

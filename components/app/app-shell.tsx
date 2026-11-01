@@ -39,7 +39,6 @@ import {
 } from '@/components/ui/sidebar'
 import { NAV, ROLE_LABEL } from '@/lib/nav'
 import type { AccountIdentity } from '@/lib/identity'
-import { useStore } from '@/lib/store'
 import type { Role } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -48,6 +47,19 @@ function isActive(pathname: string, href: string, all: string[]) {
   if (pathname === href) return true
   if (!pathname.startsWith(`${href}/`)) return false
   return !all.some((other) => other !== href && other.startsWith(`${href}/`) && pathname.startsWith(other))
+}
+
+function humanizeRouteSegment(segment: string) {
+  try {
+    return (
+      decodeURIComponent(segment)
+        .replace(/[-_]+/g, ' ')
+        .replace(/[^a-zA-Z0-9 ]/g, '')
+        .trim() || 'Details'
+    )
+  } catch {
+    return 'Details'
+  }
 }
 
 function BrandHeader() {
@@ -121,7 +133,6 @@ function SidebarNav({ role }: { role: Role }) {
 
 function Breadcrumbs({ role }: { role: Role }) {
   const pathname = usePathname()
-  const { getResource } = useStore()
   const segments = pathname.split('/').filter(Boolean).slice(1)
   const labels: Record<string, string> = {
     dashboard: role === 'owner' ? 'Overview' : 'Dashboard',
@@ -137,7 +148,12 @@ function Breadcrumbs({ role }: { role: Role }) {
     new: 'Add resource',
     edit: 'Edit',
   }
-  const label = (seg: string) => labels[seg] ?? getResource(seg)?.name ?? seg
+  const label = (seg: string, index: number) => {
+    if (labels[seg]) return labels[seg]
+    if (segments[index - 1] === 'resources') return 'Resource'
+    if (/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(seg)) return 'Details'
+    return humanizeRouteSegment(seg)
+  }
 
   return (
     <nav aria-label="Breadcrumb" className="hidden min-w-0 items-center gap-1.5 text-sm md:flex">
@@ -149,7 +165,7 @@ function Breadcrumbs({ role }: { role: Role }) {
             className={cn('truncate', index === segments.length - 1 ? 'text-ink font-medium' : 'text-ink-muted')}
             aria-current={index === segments.length - 1 ? 'page' : undefined}
           >
-            {label(seg)}
+            {label(seg, index)}
           </span>
         </span>
       ))}
@@ -171,6 +187,19 @@ export function AppShell({
   const user = identity
   const other: Role = role === 'student' ? 'owner' : role === 'owner' ? 'student' : 'student'
   const [unreadCount, setUnreadCount] = useState(0)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+
+  useEffect(() => {
+    const cookie = document.cookie
+      .split('; ')
+      .find((entry) => entry.startsWith('sidebar_state='))
+    const open = cookie ? cookie.slice('sidebar_state='.length) !== 'false' : true
+
+    setSidebarOpen(open)
+    if (!cookie) {
+      document.cookie = 'sidebar_state=true; path=/; max-age=604800; samesite=lax'
+    }
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -204,7 +233,7 @@ export function AppShell({
   }, [userId])
 
   return (
-    <SidebarProvider defaultOpen className="bg-canvas">
+    <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen} className="bg-canvas">
       <Sidebar collapsible="icon" variant="sidebar" className="border-r border-line bg-white/90 backdrop-blur-xl">
         <SidebarHeader className="border-b border-line-muted h-16 px-3 py-0">
           <BrandHeader />

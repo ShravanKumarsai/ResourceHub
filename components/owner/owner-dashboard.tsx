@@ -2,7 +2,9 @@ import Link from 'next/link'
 import { AlertTriangle, ArrowRight, CalendarClock, ClipboardList, Layers, ShieldAlert } from 'lucide-react'
 import { EmptyState, SectionCard } from '@/components/page-header'
 import { buttonVariants } from '@/components/ui/button'
+import { DashboardQueryError } from '@/components/dashboard/dashboard-state'
 import { requireWorkspaceRole } from '@/lib/auth/workspace'
+import { logSupabaseError } from '@/lib/supabase/dev-error'
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return '—'
@@ -17,39 +19,37 @@ function formatDateTime(value: string | null | undefined) {
 export async function OwnerDashboard() {
   const { supabase, user } = await requireWorkspaceRole('resource_manager')
 
-  const [profileResult, resourcesResult, bookingsResult, incidentsResult] = await Promise.all([
+  const [profileResult, resourcesResult] = await Promise.all([
     supabase.from('profiles').select('display_name').eq('id', user.id).maybeSingle(),
     supabase
       .from('resources')
-      .select('id, name, listed, availability, owner_user_id, created_at')
+      .select('id, name, listed, availability, created_at')
       .eq('owner_user_id', user.id)
       .order('created_at', { ascending: false }),
-    supabase
-      .from('bookings')
-      .select('id, status, starts_at, ends_at, purpose, requester_user_id, resource_id, resources(name)')
-      .in(
-        'resource_id',
-        (await supabase
-          .from('resources')
-          .select('id')
-          .eq('owner_user_id', user.id)
-          .then((result) => (result.data ?? []).map((row) => row.id))) ?? [],
-      )
-      .order('starts_at', { ascending: true }),
-    supabase
-      .from('incidents')
-      .select('id, status, severity, title, resource_id, resources(name)')
-      .in(
-        'resource_id',
-        (await supabase
-          .from('resources')
-          .select('id')
-          .eq('owner_user_id', user.id)
-          .then((result) => (result.data ?? []).map((row) => row.id))) ?? [],
-      )
-      .order('created_at', { ascending: false })
-      .limit(6),
   ])
+
+  const resourceIds = (resourcesResult.data ?? []).map((resource) => resource.id)
+  const [bookingsResult, incidentsResult] = resourcesResult.error
+    ? [null, null]
+    : resourceIds.length
+      ? await Promise.all([
+          supabase
+            .from('bookings')
+            .select('id, status, starts_at, ends_at, purpose, requester_user_id, resource_id, resources(name)')
+            .in('resource_id', resourceIds)
+            .order('starts_at', { ascending: true }),
+          supabase
+            .from('incidents')
+            .select('id, status, severity, title, resource_id, resources(name)')
+            .in('resource_id', resourceIds)
+            .order('created_at', { ascending: false }),
+        ])
+      : [{ data: [], error: null }, { data: [], error: null }]
+
+  if (profileResult.error) logSupabaseError('Loading owner dashboard profile failed', profileResult.error)
+  if (resourcesResult.error) logSupabaseError('Loading owner dashboard resources failed', resourcesResult.error)
+  if (bookingsResult?.error) logSupabaseError('Loading owner dashboard bookings failed', bookingsResult.error)
+  if (incidentsResult?.error) logSupabaseError('Loading owner dashboard incidents failed', incidentsResult.error)
 
   const profileName =
     profileResult.data?.display_name?.trim() ||
@@ -58,8 +58,10 @@ export async function OwnerDashboard() {
     user.user_metadata?.name?.trim() ||
     'Resource owner'
   const resources = resourcesResult.data ?? []
-  const bookings = bookingsResult.data ?? []
-  const incidents = incidentsResult.data ?? []
+  const bookings = bookingsResult?.data ?? []
+  const incidents = incidentsResult?.data ?? []
+  const bookingsUnavailable = !bookingsResult || Boolean(bookingsResult.error)
+  const incidentsUnavailable = !incidentsResult || Boolean(incidentsResult.error)
   const pendingRequests = bookings.filter((booking) => booking.status === 'pending')
   const today = new Date()
   const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate())
@@ -73,15 +75,15 @@ export async function OwnerDashboard() {
   const statCards = [
     {
       label: 'Pending requests',
-      value: bookingsResult.error ? '—' : pendingRequests.length,
-      detail: bookingsResult.error ? 'Live booking data is unavailable.' : pendingRequests.length ? 'Awaiting your decision' : 'No requests waiting on you',
+      value: bookingsUnavailable ? '—' : pendingRequests.length,
+      detail: bookingsUnavailable ? 'Live booking data is unavailable.' : pendingRequests.length ? 'Awaiting your decision' : 'No requests waiting on you',
       tone: 'bg-status-pending-bg text-status-pending',
       icon: CalendarClock,
     },
     {
       label: 'Sessions today',
-      value: bookingsResult.error ? '—' : sessionsToday.length,
-      detail: bookingsResult.error ? 'Unable to load sessions today.' : sessionsToday.length ? 'Approved or in use' : 'No sessions scheduled today',
+      value: bookingsUnavailable ? '—' : sessionsToday.length,
+      detail: bookingsUnavailable ? 'Unable to load sessions today.' : sessionsToday.length ? 'Approved or in use' : 'No sessions scheduled today',
       tone: 'bg-status-approved-bg text-status-approved',
       icon: ClipboardList,
     },
@@ -94,8 +96,8 @@ export async function OwnerDashboard() {
     },
     {
       label: 'Open incidents',
-      value: incidentsResult.error ? '—' : openIncidents.length,
-      detail: incidentsResult.error ? 'Incident feed is unavailable.' : openIncidents.length ? 'Need review' : 'No open incidents',
+      value: incidentsUnavailable ? '—' : openIncidents.length,
+      detail: incidentsUnavailable ? 'Incident feed is unavailable.' : openIncidents.length ? 'Need review' : 'No open incidents',
       tone: 'bg-surface text-navy',
       icon: ShieldAlert,
     },
@@ -118,6 +120,21 @@ export async function OwnerDashboard() {
           </Link>
         </div>
       </div>
+
+      {profileResult.error ? <DashboardQueryError title="Your profile could not be loaded" /> : null}
+      {resourcesResult.error ? <DashboardQueryError title="Your resource inventory could not be loaded" /> : null}
+      {bookingsUnavailable ? (
+        <DashboardQueryError
+          title="Booking activity could not be loaded"
+          description={resourcesResult.error ? 'Your resources must load before their bookings can be queried.' : undefined}
+        />
+      ) : null}
+      {incidentsUnavailable ? (
+        <DashboardQueryError
+          title="Incident activity could not be loaded"
+          description={resourcesResult.error ? 'Your resources must load before their incidents can be queried.' : undefined}
+        />
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {statCards.map((card) => {
@@ -148,7 +165,9 @@ export async function OwnerDashboard() {
             </Link>
           }
         >
-          {pendingRequests.length ? (
+          {bookingsUnavailable ? (
+            <p className="text-ink-muted text-sm">Booking requests are unavailable until the query succeeds.</p>
+          ) : pendingRequests.length ? (
             <ul className="space-y-3">
               {pendingRequests.slice(0, 4).map((booking) => (
                 <li key={booking.id} className="border-line-muted flex items-start justify-between gap-4 border-b pb-3 last:border-b-0 last:pb-0">
@@ -181,7 +200,9 @@ export async function OwnerDashboard() {
             </Link>
           }
         >
-          {openIncidents.length ? (
+          {incidentsUnavailable ? (
+            <p className="text-ink-muted text-sm">Incident activity is unavailable until the query succeeds.</p>
+          ) : openIncidents.length ? (
             <ul className="space-y-3">
               {openIncidents.slice(0, 3).map((incident) => (
                 <li key={incident.id} className="border-line-muted border-b pb-3 last:border-b-0 last:pb-0">
@@ -210,7 +231,9 @@ export async function OwnerDashboard() {
       </div>
 
       <SectionCard title="Resource overview" description="Published and draft resources currently under your ownership">
-        {resources.length ? (
+        {resourcesResult.error ? (
+          <p className="text-ink-muted text-sm">Resource inventory is unavailable until the query succeeds.</p>
+        ) : resources.length ? (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {resources.map((resource) => (
               <div key={resource.id} className="rounded-xl border border-line bg-surface/70 p-4">

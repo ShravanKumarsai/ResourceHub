@@ -3,14 +3,18 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
-import { Layers, Pencil, Plus } from 'lucide-react'
+import { Archive, ArchiveRestore, Layers, Pencil, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import { EmptyState, PageHeader } from '@/components/page-header'
 import { ResourceImage } from '@/components/resource/resource-image'
 import { AvailabilityBadge } from '@/components/status-badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { NativeSelect } from '@/components/ui/native-select'
-import { updateResourceListing } from '@/app/owner/resources/actions'
+import {
+  archiveResource,
+  restoreResource,
+  updateResourceListing,
+} from '@/app/owner/resources/actions'
 import { AVAILABILITY_LABEL, formatPrice } from '@/lib/format'
 import type { Resource, Availability } from '@/lib/types'
 
@@ -39,6 +43,34 @@ export function OwnerResources({ resources }: { resources: Resource[] }) {
     await update(resource.id, { listed: !resource.listed })
   }
 
+  async function changeArchiveState(resource: Resource) {
+    const restoring = Boolean(resource.archivedAt)
+    if (
+      !restoring &&
+      !window.confirm(
+        `Archive "${resource.name}"? It will be removed from discovery and new bookings. Its booking and activity history will be preserved.`,
+      )
+    ) {
+      return
+    }
+
+    setUpdating(resource.id)
+    try {
+      if (restoring) {
+        await restoreResource(resource.id)
+        toast.success('Resource restored as a draft')
+      } else {
+        await archiveResource(resource.id)
+        toast.success('Resource archived; its history was preserved')
+      }
+      router.refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not update this resource.')
+    } finally {
+      setUpdating(null)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -65,7 +97,11 @@ export function OwnerResources({ resources }: { resources: Resource[] }) {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="truncate text-base font-semibold">{r.name}</h2>
-                      {!r.listed ? (
+                      {r.archivedAt ? (
+                        <span className="inline-flex h-6 items-center rounded-full bg-status-rejected-bg px-2.5 text-[11px] font-medium text-status-rejected">
+                          Archived
+                        </span>
+                      ) : !r.listed ? (
                         <span className="inline-flex h-6 items-center rounded-full bg-surface px-2.5 text-[11px] font-medium text-ink-muted">
                           Draft
                         </span>
@@ -88,7 +124,7 @@ export function OwnerResources({ resources }: { resources: Resource[] }) {
                   <NativeSelect
                     id={`avail-${r.id}`}
                     value={r.availability}
-                    disabled={updating === r.id}
+                    disabled={updating === r.id || Boolean(r.archivedAt)}
                     onChange={(e) => update(r.id, { availability: e.target.value as Availability })}
                     className="sm:flex-1"
                   >
@@ -103,7 +139,7 @@ export function OwnerResources({ resources }: { resources: Resource[] }) {
                     <Button
                       variant="outline"
                       className="flex-1"
-                      disabled={updating === r.id}
+                      disabled={updating === r.id || Boolean(r.archivedAt)}
                       onClick={() => void toggleListing(r)}
                     >
                       {r.listed ? 'Unlist' : 'Publish'}
@@ -118,6 +154,15 @@ export function OwnerResources({ resources }: { resources: Resource[] }) {
                     </Link>
                   </div>
                 </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={updating === r.id}
+                  onClick={() => void changeArchiveState(r)}
+                >
+                  {r.archivedAt ? <ArchiveRestore /> : <Archive />}
+                  {r.archivedAt ? 'Restore as draft' : 'Archive resource'}
+                </Button>
               </div>
             </article>
           ))}

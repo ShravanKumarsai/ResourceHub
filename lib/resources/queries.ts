@@ -1,10 +1,38 @@
 import 'server-only'
+import { requireAuthenticatedUser } from '@/lib/auth/server'
 import { requireWorkspaceRole } from '@/lib/auth/workspace'
 import { createClient } from '@/lib/supabase/server'
 import type { Database } from '@/lib/supabase/database.types'
 import type { Resource, ResourceOwnerMembership, Spec } from '@/lib/types'
 
 type ResourceRow = Database['public']['Tables']['resources']['Row']
+type ResourceListingRow = Pick<
+  ResourceRow,
+  | 'id'
+  | 'institution_id'
+  | 'owner_name'
+  | 'name'
+  | 'category'
+  | 'location'
+  | 'description'
+  | 'image_path'
+  | 'specifications'
+  | 'highlights'
+  | 'availability'
+  | 'hourly_rate'
+  | 'max_duration_hours'
+  | 'approval_mode'
+  | 'eligibility'
+  | 'training'
+  | 'safety'
+  | 'use_cases'
+  | 'instructions'
+  | 'listed'
+> &
+  Partial<Pick<ResourceRow, 'owner_membership_id' | 'owner_user_id' | 'archived_at'>>
+
+const PUBLIC_RESOURCE_COLUMNS =
+  'id, institution_id, owner_name, name, category, location, description, image_path, specifications, highlights, availability, hourly_rate, max_duration_hours, approval_mode, eligibility, training, safety, use_cases, instructions, listed' as const
 
 function normalizeCategoryValue(value: string) {
   return value.replace(/\s+/g, ' ').trim()
@@ -26,7 +54,7 @@ function toSpecs(value: ResourceRow['specifications']): Spec[] {
   })
 }
 
-async function mapResources(rows: ResourceRow[], supabase: Awaited<ReturnType<typeof createClient>>) {
+async function mapResources(rows: ResourceListingRow[], supabase: Awaited<ReturnType<typeof createClient>>) {
   const institutionIds = [...new Set(rows.map((row) => row.institution_id))]
   const institutionsResult = institutionIds.length
     ? await supabase.from('institutions').select('id, name').in('id', institutionIds)
@@ -37,41 +65,49 @@ async function mapResources(rows: ResourceRow[], supabase: Awaited<ReturnType<ty
     (institutionsResult.data ?? []).map((institution) => [institution.id, institution.name]),
   )
 
-  return rows.map<Resource>((row) => ({
-    id: row.id,
-    institutionId: row.institution_id,
-    ownerMembershipId: row.owner_membership_id,
-    ownerId: row.owner_user_id,
-    ownerName: row.owner_name,
-    name: row.name,
-    category: row.category as Resource['category'],
-    institution: institutionNames.get(row.institution_id) ?? 'Institution',
-    location: row.location,
-    description: row.description,
-    imagePath: row.image_path,
-    image: row.image_path
-      ? supabase.storage.from('resource-images').getPublicUrl(row.image_path).data.publicUrl
-      : '',
-    specs: toSpecs(row.specifications),
-    highlights: row.highlights,
-    availability: row.availability as Resource['availability'],
-    hourlyRate: Number(row.hourly_rate),
-    maxDurationHours: row.max_duration_hours,
-    approval: row.approval_mode === 'automatic' ? 'Automatic confirmation' : 'Owner approval',
-    eligibility: row.eligibility,
-    training: row.training,
-    safety: row.safety,
-    useCases: row.use_cases,
-    instructions: row.instructions,
-    listed: row.listed,
-  }))
+  return rows.map<Resource>((row) => {
+    const institution = institutionNames.get(row.institution_id)
+    if (!institution) {
+      throw new Error('Could not resolve the institution for a listed resource.')
+    }
+
+    return {
+      id: row.id,
+      institutionId: row.institution_id,
+      ownerMembershipId: row.owner_membership_id,
+      ownerId: row.owner_user_id,
+      ownerName: row.owner_name,
+      archivedAt: row.archived_at,
+      name: row.name,
+      category: row.category as Resource['category'],
+      institution,
+      location: row.location,
+      description: row.description,
+      imagePath: row.image_path,
+      image: row.image_path
+        ? supabase.storage.from('resource-images').getPublicUrl(row.image_path).data.publicUrl
+        : '',
+      specs: toSpecs(row.specifications),
+      highlights: row.highlights,
+      availability: row.availability as Resource['availability'],
+      hourlyRate: Number(row.hourly_rate),
+      maxDurationHours: row.max_duration_hours,
+      approval: row.approval_mode === 'automatic' ? 'Automatic confirmation' : 'Owner approval',
+      eligibility: row.eligibility,
+      training: row.training,
+      safety: row.safety,
+      useCases: row.use_cases,
+      instructions: row.instructions,
+      listed: row.listed,
+    }
+  })
 }
 
 export async function listListedResources() {
   const supabase = await createClient()
   const { data, error } = await supabase
     .from('resources')
-    .select('*')
+    .select(PUBLIC_RESOURCE_COLUMNS)
     .eq('listed', true)
     .order('created_at', { ascending: false })
 
@@ -83,7 +119,7 @@ export async function getListedResource(id: string) {
   const supabase = await createClient()
   const { data, error } = await supabase
     .from('resources')
-    .select('*')
+    .select(PUBLIC_RESOURCE_COLUMNS)
     .eq('id', id)
     .eq('listed', true)
     .maybeSingle()
@@ -99,6 +135,41 @@ export async function listOwnedResources() {
     .from('resources')
     .select('*')
     .eq('owner_user_id', user.id)
+    .order('created_at', { ascending: false })
+
+  if (error) throw error
+  return mapResources(data ?? [], supabase)
+}
+
+export async function listMyFavoriteResourceIds() {
+  const supabase = await createClient()
+  const { data: authData, error: authError } = await supabase.auth.getUser()
+  if (authError) throw authError
+  if (!authData.user) return []
+
+  const { data, error } = await supabase
+    .from('resource_favorites')
+    .select('resource_id')
+
+  if (error) throw error
+  return (data ?? []).map((favorite) => favorite.resource_id)
+}
+
+export async function listMySavedResources() {
+  const { supabase } = await requireAuthenticatedUser()
+  const { data: favorites, error: favoriteError } = await supabase
+    .from('resource_favorites')
+    .select('resource_id')
+
+  if (favoriteError) throw favoriteError
+  const resourceIds = (favorites ?? []).map((favorite) => favorite.resource_id)
+  if (!resourceIds.length) return []
+
+  const { data, error } = await supabase
+    .from('resources')
+    .select('*')
+    .in('id', resourceIds)
+    .eq('listed', true)
     .order('created_at', { ascending: false })
 
   if (error) throw error

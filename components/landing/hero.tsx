@@ -1,4 +1,5 @@
 import Image from 'next/image'
+import { unstable_rethrow } from 'next/navigation'
 import { CheckCircle2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
 import { getOptionalSupabaseConfig } from '@/lib/supabase/config'
@@ -14,64 +15,93 @@ function formatPercent(value: number | null | undefined) {
   return `${Math.round(value)}%`
 }
 
-async function getLandingStats() {
-  if (!getOptionalSupabaseConfig()) {
-    return [
+function unavailableLandingStats() {
+  return {
+    institutions: [],
+    stats: [
       { label: 'Participating institutions', value: 'Unavailable' },
       { label: 'Resource categories', value: 'Unavailable' },
       { label: 'Bookings completed', value: 'Unavailable' },
       { label: 'Resources returned in good condition', value: 'Unavailable' },
-    ]
+    ],
+  }
+}
+
+async function getLandingStats() {
+  if (!getOptionalSupabaseConfig()) {
+    return unavailableLandingStats()
   }
 
-  const supabase = await createClient()
+  try {
+    const supabase = await createClient()
 
-  const [institutionsResult, categoriesResult, completedBookingsResult, checkInReportsResult] =
-    await Promise.all([
+    const [
+      institutionCountResult,
+      institutionsResult,
+      categoriesResult,
+      completedBookingsResult,
+      checkInReportsResult,
+    ] = await Promise.all([
       supabase.from('institutions').select('id', { count: 'exact', head: true }).eq('is_active', true),
+      supabase.from('institutions').select('name').eq('is_active', true).order('name'),
       supabase.from('resources').select('category').eq('listed', true),
       supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('status', 'completed'),
-      supabase
-        .from('condition_reports')
-        .select('rating')
-        .eq('phase', 'check_in'),
+      supabase.from('condition_reports').select('rating').eq('phase', 'check_in'),
     ])
 
-  const institutionCount = institutionsResult.error ? null : institutionsResult.count ?? 0
-  const listedCategories = categoriesResult.error ? null : categoriesResult.data ?? []
-  const categoryCount = listedCategories ? new Set(listedCategories.map((row) => row.category).filter(Boolean)).size : null
-  const completedBookingsCount = completedBookingsResult.error ? null : completedBookingsResult.count ?? 0
+    const institutionCount = institutionCountResult.error ? null : institutionCountResult.count ?? 0
+    const institutions = institutionsResult.error
+      ? []
+      : (institutionsResult.data ?? []).map((institution) => institution.name)
+    const listedCategories = categoriesResult.error ? null : categoriesResult.data ?? []
+    const categoryCount = listedCategories ? new Set(listedCategories.map((row) => row.category).filter(Boolean)).size : null
+    const completedBookingsCount = completedBookingsResult.error ? null : completedBookingsResult.count ?? 0
 
-  let goodReturnRate: number | null = null
-  if (!checkInReportsResult.error) {
-    const reports = checkInReportsResult.data ?? []
-    const total = reports.length
-    const goodReturns = reports.filter((report) => ['excellent', 'good'].includes(report.rating)).length
-    goodReturnRate = total > 0 ? (goodReturns / total) * 100 : null
+    let goodReturnRate: number | null = null
+    if (!checkInReportsResult.error) {
+      const reports = checkInReportsResult.data ?? []
+      const total = reports.length
+      const goodReturns = reports.filter((report) => ['excellent', 'good'].includes(report.rating)).length
+      goodReturnRate = total > 0 ? (goodReturns / total) * 100 : null
+    }
+
+    return {
+      institutions,
+      stats: [
+        {
+          label: 'Participating institutions',
+          value: institutionCount === null ? 'Unavailable' : formatCount(institutionCount),
+        },
+        {
+          label: 'Resource categories',
+          value: categoryCount === null ? 'Unavailable' : formatCount(categoryCount),
+        },
+        {
+          label: 'Bookings completed',
+          value: completedBookingsCount === null ? 'Unavailable' : formatCount(completedBookingsCount),
+        },
+        {
+          label: 'Resources returned in good condition',
+          value: goodReturnRate === null ? 'Unavailable' : formatPercent(goodReturnRate),
+        },
+      ],
+    }
+  } catch (error) {
+    unstable_rethrow(error)
+    const message =
+      typeof error === 'object' &&
+      error !== null &&
+      'message' in error &&
+      typeof error.message === 'string'
+        ? error.message
+        : 'Unknown homepage statistics error'
+    console.error('Could not load homepage statistics.', { message })
+    return unavailableLandingStats()
   }
-
-  return [
-    {
-      label: 'Participating institutions',
-      value: institutionCount === null ? 'Unavailable' : formatCount(institutionCount),
-    },
-    {
-      label: 'Resource categories',
-      value: categoryCount === null ? 'Unavailable' : formatCount(categoryCount),
-    },
-    {
-      label: 'Bookings completed',
-      value: completedBookingsCount === null ? 'Unavailable' : formatCount(completedBookingsCount),
-    },
-    {
-      label: 'Resources returned in good condition',
-      value: goodReturnRate === null ? 'Unavailable' : formatPercent(goodReturnRate),
-    },
-  ]
 }
 
 export async function Hero() {
-  const stats = await getLandingStats()
+  const { stats, institutions } = await getLandingStats()
 
   return (
     <section className="border-line border-b bg-canvas">
@@ -106,7 +136,7 @@ export async function Hero() {
         </div>
       </div>
       <div className="container-page pb-12 lg:-mt-6 lg:pb-16">
-        <HeroSearch />
+        <HeroSearch institutions={institutions} />
         <dl className="mt-8 grid grid-cols-2 gap-6 lg:grid-cols-4">
           {stats.map((s) => (
             <div key={s.label} className="border-line border-l-2 pl-4">

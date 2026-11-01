@@ -15,6 +15,7 @@ export interface IncidentWorkspaceBooking {
 }
 
 export interface IncidentWorkspaceEvent {
+  id: string
   at: string
   by: string
   text: string
@@ -38,4 +39,6 @@ export interface IncidentWorkspaceData {
   incidents: IncidentWorkspaceRecord[]
   resources: IncidentWorkspaceResource[]
   bookings: IncidentWorkspaceBooking[]
+  hasMore: boolean
+  nextCursor: string | null
 }

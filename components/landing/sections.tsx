@@ -10,11 +10,11 @@ import {
   Building2,
   History,
 } from 'lucide-react'
+import { unstable_rethrow } from 'next/navigation'
 import { ResourceCard } from '@/components/resource-card'
 import { buttonVariants } from '@/components/ui/button'
-import { CATEGORY_BLURB, CATEGORY_ICON } from '@/lib/categories'
-import { CALDER, HARLOW, NIT, RESOURCES } from '@/lib/data'
-import { CATEGORIES } from '@/lib/types'
+import { listActiveInstitutionNames, listListedResources } from '@/lib/resources/queries'
+import type { Resource } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 function SectionHeading({
@@ -39,55 +39,39 @@ function SectionHeading({
   )
 }
 
-export function CategoryGrid() {
-  return (
-    <section className="container-page py-16 lg:py-20" aria-labelledby="categories-heading">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <SectionHeading
-          eyebrow="Browse by category"
-          title="Equipment and spaces for every stage of a project"
-        />
-        <Link href="/explore" className={buttonVariants({ variant: 'outline' })}>
-          View all resources
-          <ArrowRight />
-        </Link>
-      </div>
-      <h2 id="categories-heading" className="sr-only">
-        Resource categories
-      </h2>
-      <ul className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {CATEGORIES.map((category) => {
-          const Icon = CATEGORY_ICON[category]
-          const count = RESOURCES.filter((r) => r.category === category).length
-          return (
-            <li key={category}>
-              <Link
-                href={`/explore?category=${encodeURIComponent(category)}`}
-                className="group border-line hover:border-teal/50 flex h-full flex-col rounded-xl border bg-white p-5 transition-colors"
-              >
-                <span className="bg-teal-soft text-teal flex size-10 items-center justify-center rounded-lg">
-                  <Icon className="size-5" aria-hidden="true" />
-                </span>
-                <span className="text-ink group-hover:text-teal mt-4 text-[15px] leading-5 font-semibold">
-                  {category}
-                </span>
-                <span className="text-ink-muted mt-1.5 text-[13px] leading-5">
-                  {CATEGORY_BLURB[category]}
-                </span>
-                <span className="text-ink-muted mt-4 text-xs">
-                  {count === 0 ? 'Opening soon' : `${count} ${count === 1 ? 'resource' : 'resources'}`}
-                </span>
-              </Link>
-            </li>
-          )
-        })}
-      </ul>
-    </section>
-  )
-}
+export async function LiveResourceShowcase() {
+  let resources: Resource[]
+  try {
+    resources = await listListedResources()
+  } catch (error) {
+    unstable_rethrow(error)
+    const message =
+      typeof error === 'object' &&
+      error !== null &&
+      'message' in error &&
+      typeof error.message === 'string'
+        ? error.message
+        : 'Unknown resource query error'
+    console.error('Could not load homepage resource listings.', { message })
+    return (
+      <section className="container-page py-16 lg:py-20" aria-labelledby="resource-error-heading">
+        <div className="border-line rounded-xl border bg-white p-6" role="alert">
+          <h2 id="resource-error-heading" className="text-navy text-xl font-semibold">
+            Resource listings are temporarily unavailable
+          </h2>
+          <p className="text-ink-muted mt-2 text-sm leading-6">
+            Please try again later or visit the catalogue.
+          </p>
+          <Link href="/explore" className={cn(buttonVariants({ variant: 'outline' }), 'mt-4')}>
+            Open resource catalogue
+            <ArrowRight />
+          </Link>
+        </div>
+      </section>
+    )
+  }
 
-export function FeaturedResources() {
-  const featured = RESOURCES.filter((r) => ['r-1', 'r-2', 'r-5'].includes(r.id))
+  const featured = resources.slice(0, 3)
   return (
     <section className="bg-canvas border-line border-y py-16 lg:py-20">
       <div className="container-page">
@@ -102,12 +86,30 @@ export function FeaturedResources() {
             <ArrowRight />
           </Link>
         </div>
-        <div className="mt-8 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-          {featured.map((r) => (
-            <ResourceCard key={r.id} resource={r} href={`/resources/${r.id}`} />
-          ))}
-        </div>
+        {featured.length ? (
+          <div className="mt-8 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+            {featured.map((resource) => (
+              <ResourceCard
+                key={resource.id}
+                resource={resource}
+                href={`/resources/${resource.id}`}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="border-line mt-8 rounded-xl border bg-white p-6 text-sm text-ink-muted">
+            No public resource listings are available yet.
+          </p>
+        )}
       </div>
+    </section>
+  )
+}
+
+export function ResourceShowcaseLoading() {
+  return (
+    <section className="container-page py-16 lg:py-20" aria-busy="true">
+      <p className="text-ink-muted text-sm">Loading resource listings…</p>
     </section>
   )
 }
@@ -255,7 +257,23 @@ export function ForInstitutions() {
   )
 }
 
-export function About() {
+export async function About() {
+  let institutions: string[]
+  try {
+    institutions = await listActiveInstitutionNames()
+  } catch (error) {
+    unstable_rethrow(error)
+    const message =
+      typeof error === 'object' &&
+      error !== null &&
+      'message' in error &&
+      typeof error.message === 'string'
+        ? error.message
+        : 'Unknown institution query error'
+    console.error('Could not load homepage institution directory.', { message })
+    institutions = []
+  }
+
   return (
     <section id="about" className="bg-canvas border-line scroll-mt-20 border-t py-16 lg:py-20">
       <div className="container-page grid gap-10 lg:grid-cols-2">
@@ -269,18 +287,19 @@ export function About() {
             <Building2 className="text-teal size-4" aria-hidden="true" />
             Participating institutions
           </h3>
-          <ul className="border-line mt-4 divide-y divide-line-muted rounded-xl border bg-white">
-            {[
-              { name: NIT, note: 'Robotics, electronics, makerspace' },
-              { name: HARLOW, note: 'Fabrication, structures and materials' },
-              { name: CALDER, note: 'Computing, microscopy, characterisation' },
-            ].map((i) => (
-              <li key={i.name} className="flex flex-col gap-0.5 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
-                <span className="text-sm font-medium">{i.name}</span>
-                <span className="text-ink-muted text-[13px]">{i.note}</span>
-              </li>
-            ))}
-          </ul>
+          {institutions.length ? (
+            <ul className="border-line mt-4 divide-y divide-line-muted rounded-xl border bg-white">
+              {institutions.map((institution) => (
+                <li key={institution} className="px-4 py-3.5 text-sm font-medium">
+                  {institution}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="border-line text-ink-muted mt-4 rounded-xl border bg-white p-4 text-sm">
+              The institution directory is temporarily unavailable.
+            </p>
+          )}
         </div>
       </div>
     </section>

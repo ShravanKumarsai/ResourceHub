@@ -77,13 +77,14 @@ type Resource = {
   use_cases: string[]
   instructions: string[]
   listed: boolean
+  archived_at: string | null
   created_at: string
   updated_at: string
 }
 
 type ResourceInsert = Omit<
   Resource,
-  'id' | 'owner_name' | 'created_at' | 'updated_at'
+  'id' | 'owner_name' | 'created_at' | 'updated_at' | 'archived_at'
 > & {
   id?: string
   owner_name?: string
@@ -100,6 +101,7 @@ type ResourceInsert = Omit<
   use_cases?: string[]
   instructions?: string[]
   listed?: boolean
+  archived_at?: string | null
 }
 
 export type Database = {
@@ -129,7 +131,55 @@ export type Database = {
         { membership_id: string; role: string; granted_at?: string; granted_by?: string | null },
         Partial<{ membership_id: string; role: string; granted_at: string; granted_by: string | null }>
       >
+      institution_membership_events: Table<
+        {
+          id: string
+          membership_id: string | null
+          institution_id: string
+          actor_id: string | null
+          from_status: string | null
+          to_status: string
+          from_roles: string[]
+          to_roles: string[]
+          created_at: string
+          action: string
+          actor_kind: string
+          actor_principal: string | null
+        },
+        {
+          id?: string
+          membership_id?: string | null
+          institution_id: string
+          actor_id?: string | null
+          from_status?: string | null
+          to_status: string
+          from_roles?: string[]
+          to_roles?: string[]
+          created_at?: string
+          action?: string
+          actor_kind?: string
+          actor_principal?: string | null
+        },
+        Partial<{
+          membership_id: string | null
+          institution_id: string
+          actor_id: string | null
+          from_status: string | null
+          to_status: string
+          from_roles: string[]
+          to_roles: string[]
+          created_at: string
+          action: string
+          actor_kind: string
+          actor_principal: string | null
+        }>
+      >
       resources: Table<Resource, ResourceInsert, Partial<ResourceInsert>>
+      resource_favorites: Table<
+        { user_id: string; resource_id: string; created_at: string },
+        { user_id: string; resource_id: string; created_at?: string },
+        Partial<{ user_id: string; resource_id: string; created_at: string }>
+      >
       bookings: Table<
         { id: string; institution_id: string; resource_id: string; requester_membership_id: string; requester_user_id: string; starts_at: string; ends_at: string; purpose: string; status: string; decision_note: string | null; reviewed_by: string | null; reviewed_at: string | null; cancelled_at: string | null; created_at: string; updated_at: string },
         { id?: string; institution_id: string; resource_id: string; requester_membership_id: string; requester_user_id: string; starts_at: string; ends_at: string; purpose: string; status?: string; decision_note?: string | null; reviewed_by?: string | null; reviewed_at?: string | null; cancelled_at?: string | null; created_at?: string; updated_at?: string },
@@ -165,6 +215,21 @@ export type Database = {
         { id?: string; recipient_id: string; institution_id: string; activity_event_id?: string | null; title: string; body: string; created_at?: string; read_at?: string | null },
         Partial<{ recipient_id: string; institution_id: string; activity_event_id: string | null; title: string; body: string; read_at: string }>
       >
+      notification_preferences: Table<
+        { user_id: string; email_enabled: boolean; push_enabled: boolean; updated_at: string },
+        { user_id: string; email_enabled?: boolean; push_enabled?: boolean; updated_at?: string },
+        Partial<{ email_enabled: boolean; push_enabled: boolean; updated_at: string }>
+      >
+      notification_push_subscriptions: Table<
+        { id: string; user_id: string; endpoint: string; p256dh: string; auth: string; created_at: string; updated_at: string },
+        { id?: string; user_id: string; endpoint: string; p256dh: string; auth: string; created_at?: string; updated_at?: string },
+        Partial<{ user_id: string; endpoint: string; p256dh: string; auth: string; updated_at: string }>
+      >
+      notification_delivery_jobs: Table<
+        { id: string; notification_id: string; recipient_id: string; channel: string; status: string; attempts: number; next_attempt_at: string; locked_until: string | null; last_error: string | null; provider_message_id: string | null; created_at: string; delivered_at: string | null },
+        { id?: string; notification_id: string; recipient_id: string; channel: string; status?: string; attempts?: number; next_attempt_at?: string; locked_until?: string | null; last_error?: string | null; provider_message_id?: string | null; created_at?: string; delivered_at?: string | null },
+        Partial<{ status: string; attempts: number; next_attempt_at: string; locked_until: string | null; last_error: string | null; provider_message_id: string | null; delivered_at: string | null }>
+      >
     }
     Views: Record<string, never>
     Functions: {
@@ -176,6 +241,8 @@ export type Database = {
       record_booking_condition_report: { Args: { p_booking_id: string; p_phase: string; p_rating: string; p_notes: string; p_checklist: string[] }; Returns: string }
       report_resource_incident: { Args: { p_resource_id: string; p_booking_id: string | null; p_severity: string; p_title: string; p_description: string }; Returns: string }
       update_resource_incident: { Args: { p_incident_id: string; p_status: string; p_note: string }; Returns: undefined }
+      archive_resource: { Args: { p_resource_id: string }; Returns: undefined }
+      restore_resource: { Args: { p_resource_id: string }; Returns: undefined }
       join_resource_waiting_list: { Args: { p_resource_id: string; p_starts_at: string; p_ends_at: string }; Returns: string }
       get_resource_booking_availability: {
         Args: { p_resource_id: string; p_starts_at: string; p_ends_at: string }
@@ -203,6 +270,20 @@ export type Database = {
       list_institution_membership_directory: { Args: { p_institution_id: string }; Returns: { membership_id: string; applicant_name: string | null; applicant_email: string | null; requested_role: string | null; approved_roles: string[]; status: string; requested_at: string; reviewed_at: string | null }[] }
       review_institution_membership: { Args: { p_membership_id: string; p_status: string; p_roles: string[] }; Returns: undefined }
       update_institution_name: { Args: { p_institution_id: string; p_name: string }; Returns: { id: string; name: string; slug: string; is_active: boolean; created_at: string; updated_at: string } }
+      upsert_notification_push_subscription: { Args: { p_endpoint: string; p_p256dh: string; p_auth: string }; Returns: string }
+      delete_notification_push_subscription: { Args: { p_endpoint: string }; Returns: boolean }
+      claim_notification_delivery_jobs: {
+        Args: { p_channels: string[]; p_limit: number }
+        Returns: { id: string; notification_id: string; recipient_id: string; channel: string; title: string; body: string }[]
+      }
+      finish_notification_delivery_job: {
+        Args: { p_id: string; p_outcome: string; p_error_code?: string | null; p_provider_message_id?: string | null }
+        Returns: boolean
+      }
+      queue_scheduled_booking_notifications: {
+        Args: Record<PropertyKey, never>
+        Returns: number
+      }
     }
     Enums: Record<string, never>
     CompositeTypes: Record<string, never>

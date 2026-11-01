@@ -8,6 +8,7 @@ import {
   type MembershipReviewActionState,
 } from '@/app/institution/dashboard/actions'
 import { Button } from '@/components/ui/button'
+import { DashboardQueryError } from '@/components/dashboard/dashboard-state'
 
 export interface PendingApplicant {
   membership_id: string
@@ -157,14 +158,10 @@ export function MembershipReviewSection({
 }) {
   if (loadError || applicants === null) {
     return (
-      <div role="alert" className="rounded-xl border border-status-pending/25 bg-status-pending-bg p-4">
-        <h3 className="text-sm font-semibold text-status-pending">
-          Pending requests could not be loaded
-        </h3>
-        <p className="text-ink-muted mt-1 text-xs leading-5">
-          Applicant details are available only through the institution-scoped review service. Refresh to retry; no profile access is broadened.
-        </p>
-      </div>
+      <DashboardQueryError
+        title="Pending requests could not be loaded"
+        description="Applicant details are available only through the institution-scoped review service."
+      />
     )
   }
 

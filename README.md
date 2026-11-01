@@ -1,6 +1,8 @@
 # ResourceHub
 
-ResourceHub is a Next.js App Router prototype for discovering, requesting, and managing shared institutional equipment and spaces.
+ResourceHub is a Next.js 16 App Router application for discovering and managing
+shared institutional equipment and spaces. It uses React, TypeScript, Supabase
+Auth, and PostgreSQL with row-level security.
 
 ## Run locally
 
@@ -16,73 +18,118 @@ Open [http://localhost:3000](http://localhost:3000).
 Useful checks and production commands:
 
 ```powershell
-corepack pnpm run typecheck
-corepack pnpm run build
+corepack pnpm exec tsc --noEmit
+corepack pnpm build
 corepack pnpm start
 ```
 
-The project is pinned to pnpm 12.3.4 in `package.json` and should be installed with the existing `pnpm-lock.yaml`.
+The project is pinned to pnpm 12.3.4 in `package.json`; use the checked-in
+`pnpm-lock.yaml`.
 
-## Current functionality
+## Supabase setup
 
-- Browse fictional sample resources and view resource details.
-- Register and sign in with Supabase Auth; registration creates a pending institution membership request after email confirmation.
-- Create, edit, publish, and save draft resource listings in the current browser.
-- Submit booking requests, review decisions, and prevent conflicting approvals within the current browser state.
-- Record check-out and check-in condition reports, and report and update incidents.
-- Persist demo resources, bookings, activity, and waitlist entries in browser `localStorage`.
+Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` in
+`.env.local` for local development and in the hosting provider for deployment.
+The browser client uses only the publishable key. Never expose a service-role
+key in browser code.
 
-## Prototype limitations
+Auth callbacks exchange the verification code, and new applicants create
+pending institution memberships. A requested role is not an authorization
+grant. Server-side route and action checks use the authenticated session,
+active membership and approved institution role; database RLS remains
+enabled. Memberships use `public.institution_memberships`.
 
-This is not yet a production-ready institutional platform. Login and registration use Supabase Auth, and Auth sessions are verified server-side. Registration requests only a pending institution membership; it never grants a role. Student and owner workspaces are currently blocked after sign-in because their booking, resource, and incident workflows still use fictional browser-local demo data. Public catalogue pages also show fictional sample resources. There is no verified training/eligibility workflow. Browser `localStorage` is editable and isolated to one browser profile, so it does not share records across users/devices and is not suitable for real personal or institutional data. Booking conflict checks and the waitlist are client-side prototypes, not concurrency-safe shared operations. Notifications are demo records and do not send or display real alerts. Automatic waitlist allocation, scheduled overdue handling, and background reminders are not implemented.
+The development-only `GET /api/dev/supabase-connection` endpoint performs a
+read-only, zero-row query using the server client. It is not available outside
+development and does not create or change data.
 
-Do not treat demo data or public sample resources as real institutional records. Do not collect real booking or incident information until the corresponding database workflows and authorization policies are implemented.
+## Persisted workflows
 
-## Deploying the current demo
+Resource discovery and listings, resource management, bookings and booking
+decisions, handover condition reports, incident records and events, activity
+history, institution membership operations, in-app notifications, saved
+resources, and favourites use Supabase-backed reads or mutations with their
+existing server authorization and database policies.
 
-The Next.js app can be deployed to Vercel as a demo:
+The former shared browser demo store and seeded business records have been
+removed. Theme and navigation preferences may remain browser-local; they are
+not business records. Database errors are shown as errors rather than
+substituted with demo records.
 
-1. Push the project to a Git provider and import it into Vercel.
-2. Keep the framework preset as Next.js and use the existing pnpm lockfile.
-3. Use `corepack pnpm run build` as the build command; Vercel normally detects the Next.js output directory.
-4. Deploy and test the generated URL, including direct refreshes on nested routes.
+Availability conflict checks and waiting-list workflows require
+`20261101030000_availability_waiting_list.sql`. Until that migration is
+applied and verified, those controls report that they are unavailable; they
+do not fabricate queue positions or treat a failed query as an open slot.
+Booking creation continues to use the existing four-argument RPC unless the
+reservation-control flag is explicitly enabled after the corresponding schema
+is verified.
 
-This deploys the current prototype. Authenticated account creation and sessions are enabled, but shared booking/resource data and production-ready multi-user workflows are not. Configure the Supabase Auth site URL and redirect allowlist to include the deployed `/auth/callback` URL before using registration there.
+Email and browser push delivery require the notification-delivery migration,
+provider configuration, and the protected scheduled endpoint. They are
+optional and are not considered operational until configured and tested.
+In-app notifications remain separate from outbound delivery.
 
-## Supabase client setup
+## Database migrations
 
-Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` in `.env.local` for local development and in your hosting provider for deployment. Restart the Next.js development server after changing local environment variables. The browser client uses only the publishable key; no service-role key is needed or read by these utilities.
-
-The browser and server clients use only the URL and publishable key; no service-role key is needed. Auth callback handling exchanges the verification code, then submits a pending membership request through the signed-in user's RLS permissions. The `/auth/status` page shows the current user's own profile and membership state. Student and owner routes verify the Auth session server-side and remain blocked until their backend workflows are ready. Existing `localStorage` demo records are neither imported nor cleared. During local development only, `GET /api/dev/supabase-connection` runs a read-only, zero-row query using the server client. It checks `SUPABASE_CONNECTION_TEST_TABLE`, defaulting to `resourcehub_connection_test`. A successful response means Supabase answered and that table is accessible; `missing_table` means the request reached Supabase but the table was not found. The endpoint returns 404 outside development and does not create or change data.
-
-## Reservation-control migrations
-
-The reservation-control SQL is prepared locally and has not been applied to a database. Apply migrations in timestamp order after confirming the target database has the seven earlier migrations:
+The migrations below are prepared locally; this work has not applied them to
+any database. Before deployment, inspect the target project's migration
+history and compare every file with the exact target. Apply only migrations
+that are actually pending, in timestamp order, after confirming their
+dependencies:
 
 1. `20261101000000_update_institution_name.sql`
 2. `20261101010000_membership_review_notifications.sql`
 3. `20261101020000_reservation_controls.sql`
 4. `20261101030000_availability_waiting_list.sql`
+5. `20261101040000_resource_archive_favorites.sql`
+6. `20261101050000_notification_delivery.sql`
 
-The controls migration keeps the existing confirmed-booking exclusion constraint and public resource-discovery grants and policies. It adds independent per-institution reservation limits (default 3 active bookings, counting pending/approved/in-use, and 2 distinct resources with overlapping time slots per user; each configurable from 1 to 10), atomic booking idempotency, and a persistent rolling rate limit of 10 successful new booking requests per user per minute. Overlapping ranges use half-open `[start, end)` intervals, so adjacent bookings do not overlap. Same-key retries do not consume the rate limit. Configure and read limits through the administrator-only `set_institution_reservation_limits` and `get_institution_reservation_limits` RPCs. The membership relation is `public.institution_memberships`.
+Do not replay already-applied migrations or apply these blindly to production.
+The reservation-control migration keeps the confirmed-booking exclusion
+constraint and existing public discovery grants and policies. Its independent
+institution settings default to 3 active reservations and 2 distinct
+overlapping resources per user. Time intervals are half-open `[start, end)`;
+adjacent bookings do not overlap. It adds atomic idempotency, persistent rate
+limiting, and administrator-managed limits. The availability migration adds
+privacy-scoped conflict checks and persistent waiting-list operations.
 
-The application continues using the existing four-argument booking RPC and its legacy validation path until the reservation-control migrations (items 1–3) are applied. `RESERVATION_CONTROLS_ENABLED` is opt-in and defaults to disabled; set it to `true` only after those three migrations have completed successfully. This enables the idempotent booking RPC. Do not enable it before the database migrations are applied.
+`RESERVATION_CONTROLS_ENABLED` defaults to disabled. Do not set it to `true`
+until the reservation-control migration and required predecessors have been
+applied and verified on the target database. The application otherwise keeps
+the existing booking RPC compatibility path.
 
-Run the database migration tests against a local Supabase database with `supabase test db`. They cover duplicate requests, limits, time overlaps, stale approvals, inactive institutions, cross-institution authorization, RLS/grants, and function security settings.
+The archive/favourites migration preserves resources and booking history,
+prevents physical resource deletion, records archive/restore activity, and
+adds user-owned saved-resource rows with RLS. The notification migration adds
+opt-in channel preferences, push subscriptions, a bounded/retryable delivery
+queue, deduplicated booking reminders, and waiting-list offer notifications.
+Email uses Resend; web push uses VAPID. The scheduled endpoint is configured
+for Vercel every five minutes and rejects requests without a sufficiently long
+`CRON_SECRET`.
 
-## Availability and waiting-list migration
+Run SQL migration tests only against a disposable local or staging database:
 
-`supabase/migrations/20261101030000_availability_waiting_list.sql` depends on the operational schema and booking RPC migrations above. Apply it only after those migrations. It adds a narrowly scoped availability RPC (only conflict flags, no other users' booking details), authenticated queue positions ordered oldest-first within the exact resource/time slot, duplicate-safe waiting-list joins, and authenticated cancellation of a user's own active entry. Existing RLS remains enabled; queue mutations record activity events through the RPC. Until this migration is applied, booking submission remains on its existing RPC path, while the UI reports that availability/queue features are unavailable instead of treating errors as an available slot or inventing a queue position.
-
-The migration tests in `supabase/tests/availability_waiting_list.test.sql` cover confirmed and pending conflicts, half-open adjacent intervals, invalid ranges, unavailable resources, institution isolation, duplicate joins, queue ordering/recalculation, cancellation, RLS, and RPC security configuration.
-
-## Reset demo data
-
-In the browser developer tools, run:
-
-```js
-localStorage.removeItem('resourcehub-demo-v2')
-location.reload()
+```powershell
+supabase start
+supabase db reset
+supabase test db
 ```
 
-This restores the fictional seed data in that browser profile.
+These commands require the Supabase CLI and Docker and must be run only after
+checking the CLI is targeting the local stack. The pgTAP tests are under
+`supabase/tests/`. Do not use `supabase db push` as a substitute for review.
+
+## Notification delivery configuration
+
+The optional server-side configuration is listed, without values, in
+`.env.example`:
+
+- `CRON_SECRET` (at least 32 characters)
+- `SUPABASE_SERVICE_ROLE_KEY` (server-only)
+- `RESEND_API_KEY` and `NOTIFICATION_FROM_EMAIL` for email
+- `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT`
+  for browser push
+
+Keep all secret values in the hosting provider's secret manager or an
+untracked `.env.local`; never commit them. Configure browser push only over
+HTTPS and verify delivery in a non-production environment first.
