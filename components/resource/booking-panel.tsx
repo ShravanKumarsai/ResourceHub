@@ -1,16 +1,16 @@
 'use client'
 
 import Link from 'next/link'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Info } from 'lucide-react'
 import { toast } from 'sonner'
-import { joinWaitingListRequest, submitBookingRequest } from '@/app/bookings/actions'
+import { getBookingAvailability, joinWaitingListRequest, submitBookingRequest } from '@/app/bookings/actions'
 import { BookingStatusBadge } from '@/components/status-badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
-import { durationHours, formatDate, formatPrice, getTodayIso, overlaps } from '@/lib/format'
+import { durationHours, formatDate, formatPrice } from '@/lib/format'
 import type { Booking, Resource } from '@/lib/types'
 
 const TIMES = Array.from({ length: 25 }, (_, i) => {
@@ -61,18 +61,54 @@ export function BookingPanel({ resource, bookingsHref }: { resource: Resource; b
   const [touched, setTouched] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isJoiningWaitlist, setIsJoiningWaitlist] = useState(false)
+  const [isCheckingAvailability, setIsCheckingAvailability] = useState(false)
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null)
+  const [availability, setAvailability] = useState<Awaited<ReturnType<typeof getBookingAvailability>> | null>(null)
   const idempotencyRequest = useRef<{ fingerprint: string; key: string } | null>(null)
 
-  const today = getTodayIso()
+  const today = new Date().toISOString().slice(0, 10)
   const duration = durationHours(start, end)
+  const unavailable = resource.availability === 'unavailable'
+  const timeRange = useMemo(() => {
+    if (!date || date < today || duration <= 0) return null
+    const startsAt = new Date(`${date}T${start}:00Z`)
+    const endsAt = new Date(`${date}T${end}:00Z`)
+    if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) return null
+    return { startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() }
+  }, [date, duration, end, start, today])
 
-  const sameDay = useMemo(
-    () =>
-      [] as Booking[],
-    [],
-  )
-  const hardConflict = false
-  const softConflict = false
+  useEffect(() => {
+    let active = true
+    if (!timeRange || unavailable) {
+      setAvailability(null)
+      setAvailabilityError(null)
+      setIsCheckingAvailability(false)
+      return
+    }
+
+    setIsCheckingAvailability(true)
+    setAvailability(null)
+    setAvailabilityError(null)
+    void getBookingAvailability({
+      resourceId: resource.id,
+      ...timeRange,
+    })
+      .then((result) => {
+        if (active) setAvailability(result)
+      })
+      .catch((error: unknown) => {
+        if (!active) return
+        setAvailability(null)
+        setAvailabilityError(error instanceof Error ? error.message : 'Availability could not be checked.')
+      })
+      .finally(() => {
+        if (active) setIsCheckingAvailability(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [resource.id, timeRange, unavailable])
 
   const errors: string[] = []
   if (!date) errors.push('Choose a date for your session.')
@@ -83,11 +119,10 @@ export function BookingPanel({ resource, bookingsHref }: { resource: Resource; b
   if (purpose.trim().length < 15) errors.push('Describe your purpose in at least 15 characters.')
   if (!ack) errors.push('Confirm that you meet the eligibility and training requirements.')
 
-  const unavailable = resource.availability === 'unavailable'
   const cost = Math.max(duration, 0) * resource.hourlyRate
 
   async function onJoinWaitingList() {
-    if (!date || date < today || end <= start || unavailable) {
+    if (!timeRange || unavailable || !availability?.canJoinWaitingList || availability.alreadyOnWaitingList) {
       toast.error('Choose a valid available date and time range first.')
       return
     }
@@ -96,9 +131,12 @@ export function BookingPanel({ resource, bookingsHref }: { resource: Resource; b
     try {
       const { entryId } = await joinWaitingListRequest({
         resourceId: resource.id,
-        startsAt: new Date(`${date}T${start}:00Z`).toISOString(),
-        endsAt: new Date(`${date}T${end}:00Z`).toISOString(),
+        startsAt: timeRange.startsAt,
+        endsAt: timeRange.endsAt,
       })
+      setAvailability((current) => current
+        ? { ...current, alreadyOnWaitingList: true, canJoinWaitingList: false }
+        : current)
       toast.success(`Added to waiting list · reference ${entryId.slice(0, 8)}`)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not join the waiting list.')
@@ -110,14 +148,14 @@ export function BookingPanel({ resource, bookingsHref }: { resource: Resource; b
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
     setTouched(true)
-    if (errors.length || unavailable) return
+    if (errors.length || unavailable || !timeRange) return
 
     setIsSubmitting(true)
     try {
       const request = {
         resourceId: resource.id,
-        startsAt: new Date(`${date}T${start}:00Z`).toISOString(),
-        endsAt: new Date(`${date}T${end}:00Z`).toISOString(),
+        startsAt: timeRange.startsAt,
+        endsAt: timeRange.endsAt,
         purpose: purpose.trim(),
       }
       const fingerprint = JSON.stringify(request)
@@ -221,6 +259,7 @@ export function BookingPanel({ resource, bookingsHref }: { resource: Resource; b
           This resource is currently unavailable for new requests.
         </div>
       ) : null}
+      <p className="text-ink-muted mt-2 text-xs">Times are shown in UTC.</p>
 
       <div className="mt-5 space-y-4">
         <div>
@@ -278,16 +317,41 @@ export function BookingPanel({ resource, bookingsHref }: { resource: Resource; b
         </div>
       </div>
 
-      {hardConflict ? (
+      {isCheckingAvailability ? (
+        <p role="status" className="text-ink-muted mt-4 text-sm">Checking availability…</p>
+      ) : null}
+      {availabilityError ? (
+        <div role="alert" className="bg-status-rejected-bg text-status-rejected mt-4 rounded-lg p-3 text-[13px] leading-5">
+          Availability could not be verified: {availabilityError}
+        </div>
+      ) : null}
+      {availability && !availability.resourceAvailable ? (
+        <div role="alert" className="bg-status-rejected-bg text-status-rejected mt-4 flex gap-2 rounded-lg p-3 text-[13px] leading-5">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          This resource is not currently accepting requests.
+        </div>
+      ) : null}
+      {availability?.hardConflict ? (
         <div role="alert" className="bg-status-rejected-bg text-status-rejected mt-4 flex gap-2 rounded-lg p-3 text-[13px] leading-5">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           This time conflicts with a confirmed reservation. Choose a different slot.
         </div>
       ) : null}
-      {softConflict ? (
+      {availability && !availability.hardConflict && availability.resourceAvailable ? (
+        <div role="status" className="bg-status-approved-bg text-status-approved mt-4 flex gap-2 rounded-lg p-3 text-[13px] leading-5">
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          This time is available.
+        </div>
+      ) : null}
+      {availability?.softConflict ? (
         <div role="status" className="bg-status-pending-bg text-status-pending mt-4 flex gap-2 rounded-lg p-3 text-[13px] leading-5">
           <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           Another request is pending for this time. The owner will resolve the overlap.
+        </div>
+      ) : null}
+      {availability?.alreadyOnWaitingList ? (
+        <div role="status" className="bg-status-pending-bg text-status-pending mt-4 rounded-lg p-3 text-[13px] leading-5">
+          You are already on the waiting list for this time slot. View your position under My bookings.
         </div>
       ) : null}
 
@@ -304,14 +368,21 @@ export function BookingPanel({ resource, bookingsHref }: { resource: Resource; b
         <span className="font-semibold">{cost === 0 ? 'No charge' : `£${cost.toFixed(2)}`}</span>
       </div>
 
-      {hardConflict ? (
-        <Button type="button" variant="outline" size="lg" className="mt-3 w-full" disabled={unavailable || !date || end <= start || isJoiningWaitlist} onClick={onJoinWaitingList}>
+      {availability?.canJoinWaitingList ? (
+        <Button type="button" variant="outline" size="lg" className="mt-3 w-full" disabled={unavailable || !timeRange || isCheckingAvailability || isJoiningWaitlist} onClick={onJoinWaitingList}>
           {isJoiningWaitlist ? 'Adding to waiting list…' : 'Join waiting list'}
         </Button>
       ) : null}
-      <Button type="submit" size="lg" className="mt-4 w-full" disabled={unavailable || isSubmitting}>
+      <Button
+        type="submit"
+        size="lg"
+        className="mt-4 w-full"
+        disabled={unavailable || isSubmitting || availability?.hardConflict === true || availability?.resourceAvailable === false}
+      >
         {isSubmitting
           ? 'Submitting…'
+          : availability?.hardConflict
+            ? 'Choose another time'
           : resource.approval === 'Automatic confirmation'
             ? 'Confirm booking'
             : 'Submit request'}

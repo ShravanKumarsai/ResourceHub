@@ -177,6 +177,28 @@ export type Database = {
       report_resource_incident: { Args: { p_resource_id: string; p_booking_id: string | null; p_severity: string; p_title: string; p_description: string }; Returns: string }
       update_resource_incident: { Args: { p_incident_id: string; p_status: string; p_note: string }; Returns: undefined }
       join_resource_waiting_list: { Args: { p_resource_id: string; p_starts_at: string; p_ends_at: string }; Returns: string }
+      get_resource_booking_availability: {
+        Args: { p_resource_id: string; p_starts_at: string; p_ends_at: string }
+        Returns: {
+          resource_available: boolean
+          has_confirmed_conflict: boolean
+          has_pending_conflict: boolean
+          already_on_waiting_list: boolean
+          can_join_waiting_list: boolean
+        }[]
+      }
+      list_my_resource_waiting_list: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          entry_id: string
+          resource_id: string
+          starts_at: string
+          ends_at: string
+          created_at: string
+          queue_position: number
+        }[]
+      }
+      cancel_resource_waiting_list: { Args: { p_entry_id: string }; Returns: undefined }
       list_pending_membership_applicants: { Args: { p_institution_id: string }; Returns: { membership_id: string; requested_at: string; applicant_name: string | null; applicant_email: string | null; requested_role: string | null; status: string }[] }
       list_institution_membership_directory: { Args: { p_institution_id: string }; Returns: { membership_id: string; applicant_name: string | null; applicant_email: string | null; requested_role: string | null; approved_roles: string[]; status: string; requested_at: string; reviewed_at: string | null }[] }
       review_institution_membership: { Args: { p_membership_id: string; p_status: string; p_roles: string[] }; Returns: undefined }

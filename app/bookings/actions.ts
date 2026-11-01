@@ -6,6 +6,7 @@ import { requireWorkspaceRole } from '@/lib/auth/workspace'
 
 const INVALID_TIME_MESSAGE = 'Choose a valid future time range before submitting.'
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const UTC_ISO_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/
 const reservationControlsEnabled = process.env.RESERVATION_CONTROLS_ENABLED === 'true'
 
 function parseDate(iso: string) {
@@ -18,6 +19,7 @@ function parseDate(iso: string) {
 
 function toRpcErrorMessage(error: { message?: string; code?: string }) {
   const message = error?.message ?? ''
+  if (error.code === 'PGRST202') return 'Availability and waiting-list support is not enabled in the database yet.'
   if (message.toLowerCase().includes('authentication required')) return 'You need to be signed in to complete this action.'
   if (message.toLowerCase().includes('booking details are invalid')) return 'Booking details are invalid. Check the date, time range and purpose.'
   if (message.toLowerCase().includes('resource is unavailable')) return 'This resource is not accepting bookings right now.'
@@ -32,10 +34,28 @@ function toRpcErrorMessage(error: { message?: string; code?: string }) {
   if (message.toLowerCase().includes('booking participant authorization required')) return 'You are not a valid participant for this booking.'
   if (message.toLowerCase().includes('this booking cannot be cancelled')) return 'This booking cannot be cancelled from its current state.'
   if (message.toLowerCase().includes('condition report is invalid')) return 'The handover report could not be saved. Review the checklist and notes.'
+  if (message.toLowerCase().includes('already joined this waiting list')) return 'You are already on the waiting list for this time slot.'
+  if (message.toLowerCase().includes('requested time is not blocked by a confirmed booking')) return 'This time is no longer blocked by a confirmed booking, so a waiting-list entry is not needed.'
+  if (message.toLowerCase().includes('waiting-list entry not found')) return 'This waiting-list entry could not be found.'
+  if (message.toLowerCase().includes('only active waiting-list entries can be cancelled')) return 'This waiting-list entry is no longer active.'
   if (message.toLowerCase().includes('already')) return 'A matching booking already exists for this request.'
   if (message.toLowerCase().includes('overlap') || message.toLowerCase().includes('conflict')) return 'This time overlaps with an existing approved booking.'
   if (message.toLowerCase().includes('not found')) return 'This booking could not be found.'
   return message || 'The booking action could not be completed. Please try again.'
+}
+
+function parseUtcDate(value: unknown) {
+  if (typeof value !== 'string' || !UTC_ISO_PATTERN.test(value)) {
+    throw new Error(INVALID_TIME_MESSAGE)
+  }
+  const parsed = new Date(value)
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 19) !== value.slice(0, 19)
+  ) {
+    throw new Error(INVALID_TIME_MESSAGE)
+  }
+  return parsed
 }
 
 async function hasActiveStudentMembership(supabase: Awaited<ReturnType<typeof requireWorkspaceRole>>['supabase'], institutionId: string) {
@@ -142,6 +162,52 @@ export async function submitBookingRequest(input: {
   revalidatePath('/student/explore')
   if (!data) throw new Error('The booking request did not return a booking reference.')
   return { bookingId: data }
+}
+
+export async function getBookingAvailability(input: {
+  resourceId: string
+  startsAt: string
+  endsAt: string
+}) {
+  if (
+    !input ||
+    typeof input !== 'object' ||
+    !UUID_PATTERN.test(input.resourceId) ||
+    typeof input.startsAt !== 'string' ||
+    typeof input.endsAt !== 'string'
+  ) {
+    throw new Error('The availability request is invalid.')
+  }
+
+  const startsAt = parseUtcDate(input.startsAt)
+  const endsAt = parseUtcDate(input.endsAt)
+  if (endsAt <= startsAt || startsAt <= new Date()) {
+    throw new Error(INVALID_TIME_MESSAGE)
+  }
+
+  const { supabase } = await requireWorkspaceRole('student')
+  const { data, error } = await supabase.rpc('get_resource_booking_availability', {
+    p_resource_id: input.resourceId,
+    p_starts_at: startsAt.toISOString(),
+    p_ends_at: endsAt.toISOString(),
+  })
+
+  if (error) {
+    throw new Error(toRpcErrorMessage(error))
+  }
+
+  const result = data?.[0]
+  if (!result) {
+    throw new Error('Availability could not be confirmed by the database.')
+  }
+
+  return {
+    resourceAvailable: result.resource_available,
+    hardConflict: result.has_confirmed_conflict,
+    softConflict: result.has_pending_conflict,
+    alreadyOnWaitingList: result.already_on_waiting_list,
+    canJoinWaitingList: result.can_join_waiting_list,
+  }
 }
 
 export async function reviewBookingRequest(input: {
@@ -349,12 +415,19 @@ export async function joinWaitingListRequest(input: {
 }) {
   const { supabase, user } = await requireWorkspaceRole('student')
 
-  if (!UUID_PATTERN.test(input.resourceId)) {
+  if (
+    !input ||
+    typeof input !== 'object' ||
+    typeof input.resourceId !== 'string' ||
+    !UUID_PATTERN.test(input.resourceId) ||
+    typeof input.startsAt !== 'string' ||
+    typeof input.endsAt !== 'string'
+  ) {
     throw new Error('The selected resource is invalid.')
   }
 
-  const startsAt = parseDate(input.startsAt)
-  const endsAt = parseDate(input.endsAt)
+  const startsAt = parseUtcDate(input.startsAt)
+  const endsAt = parseUtcDate(input.endsAt)
   if (endsAt <= startsAt || startsAt <= new Date()) {
     throw new Error(INVALID_TIME_MESSAGE)
   }
@@ -378,9 +451,34 @@ export async function joinWaitingListRequest(input: {
   })
 
   if (error) {
+    if (error.code === '23505' || error.message.toLowerCase().includes('already joined this waiting list')) {
+      throw new Error('You are already on the waiting list for this time slot.')
+    }
     throw new Error(toRpcErrorMessage(error))
   }
 
   revalidatePath('/student/bookings')
-  return { entryId: data as string, userId: user.id }
+  revalidatePath('/student/explore')
+  if (!data) throw new Error('The waiting-list request did not return an entry reference.')
+  return { entryId: data, userId: user.id }
+}
+
+export async function cancelWaitingListRequest(entryId: string) {
+  const { supabase } = await requireWorkspaceRole('student')
+
+  if (!UUID_PATTERN.test(entryId)) {
+    throw new Error('This waiting-list entry is invalid.')
+  }
+
+  const { error } = await supabase.rpc('cancel_resource_waiting_list', {
+    p_entry_id: entryId,
+  })
+
+  if (error) {
+    throw new Error(toRpcErrorMessage(error))
+  }
+
+  revalidatePath('/student/bookings')
+  revalidatePath('/student/activity')
+  return { ok: true }
 }

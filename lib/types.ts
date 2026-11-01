@@ -143,7 +143,7 @@ export interface WaitingListEntry {
   end: string
   status: 'waiting' | 'offered' | 'accepted' | 'expired' | 'cancelled'
   createdAt: string
-  position: number
+  position: number | null
 }
 
 export interface StoreNotification {

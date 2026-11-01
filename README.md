@@ -62,12 +62,19 @@ The reservation-control SQL is prepared locally and has not been applied to a da
 1. `20261101000000_update_institution_name.sql`
 2. `20261101010000_membership_review_notifications.sql`
 3. `20261101020000_reservation_controls.sql`
+4. `20261101030000_availability_waiting_list.sql`
 
 The controls migration keeps the existing confirmed-booking exclusion constraint and public resource-discovery grants and policies. It adds independent per-institution reservation limits (default 3 active bookings, counting pending/approved/in-use, and 2 distinct resources with overlapping time slots per user; each configurable from 1 to 10), atomic booking idempotency, and a persistent rolling rate limit of 10 successful new booking requests per user per minute. Overlapping ranges use half-open `[start, end)` intervals, so adjacent bookings do not overlap. Same-key retries do not consume the rate limit. Configure and read limits through the administrator-only `set_institution_reservation_limits` and `get_institution_reservation_limits` RPCs. The membership relation is `public.institution_memberships`.
 
-The application continues using the existing four-argument booking RPC and its legacy validation path until the migrations are applied. `RESERVATION_CONTROLS_ENABLED` is opt-in and defaults to disabled; set it to `true` only after all three migrations above have completed successfully. This enables the idempotent booking RPC. Do not enable it before the database migration is applied.
+The application continues using the existing four-argument booking RPC and its legacy validation path until the reservation-control migrations (items 1–3) are applied. `RESERVATION_CONTROLS_ENABLED` is opt-in and defaults to disabled; set it to `true` only after those three migrations have completed successfully. This enables the idempotent booking RPC. Do not enable it before the database migrations are applied.
 
 Run the database migration tests against a local Supabase database with `supabase test db`. They cover duplicate requests, limits, time overlaps, stale approvals, inactive institutions, cross-institution authorization, RLS/grants, and function security settings.
+
+## Availability and waiting-list migration
+
+`supabase/migrations/20261101030000_availability_waiting_list.sql` depends on the operational schema and booking RPC migrations above. Apply it only after those migrations. It adds a narrowly scoped availability RPC (only conflict flags, no other users' booking details), authenticated queue positions ordered oldest-first within the exact resource/time slot, duplicate-safe waiting-list joins, and authenticated cancellation of a user's own active entry. Existing RLS remains enabled; queue mutations record activity events through the RPC. Until this migration is applied, booking submission remains on its existing RPC path, while the UI reports that availability/queue features are unavailable instead of treating errors as an available slot or inventing a queue position.
+
+The migration tests in `supabase/tests/availability_waiting_list.test.sql` cover confirmed and pending conflicts, half-open adjacent intervals, invalid ranges, unavailable resources, institution isolation, duplicate joins, queue ordering/recalculation, cancellation, RLS, and RPC security configuration.
 
 ## Reset demo data
 
