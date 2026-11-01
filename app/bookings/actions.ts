@@ -5,6 +5,7 @@ import { requireWorkspaceRole } from '@/lib/auth/workspace'
 
 const INVALID_TIME_MESSAGE = 'Choose a valid future time range before submitting.'
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const reservationControlsEnabled = process.env.RESERVATION_CONTROLS_ENABLED === 'true'
 
 function parseDate(iso: string) {
   const value = new Date(iso)
@@ -19,6 +20,11 @@ function toRpcErrorMessage(error: { message?: string; code?: string }) {
   if (message.toLowerCase().includes('authentication required')) return 'You need to be signed in to complete this action.'
   if (message.toLowerCase().includes('booking details are invalid')) return 'Booking details are invalid. Check the date, time range and purpose.'
   if (message.toLowerCase().includes('resource is unavailable')) return 'This resource is not accepting bookings right now.'
+  if (message.toLowerCase().includes('rate limit')) return 'Too many booking requests. Please wait a minute and try again.'
+  if (message.toLowerCase().includes('active reservation limit')) return "You have reached your institution's active reservation limit."
+  if (message.toLowerCase().includes('overlapping resource limit')) return 'You have reached the maximum number of resources you can reserve at the same time.'
+  if (message.toLowerCase().includes('already have an overlapping booking')) return 'You already have an overlapping booking request for this resource.'
+  if (message.toLowerCase().includes('booking start time has passed')) return 'The booking start time has passed, so it can no longer be approved.'
   if (message.toLowerCase().includes('active student membership required')) return 'You need an active student membership in this institution to make bookings.'
   if (message.toLowerCase().includes('pending bookings can be reviewed')) return 'This request can no longer be reviewed.'
   if (message.toLowerCase().includes('active resource owner authorization required')) return 'You are not authorised to manage this resource.'
@@ -49,11 +55,15 @@ export async function submitBookingRequest(input: {
   startsAt: string
   endsAt: string
   purpose: string
+  idempotencyKey: string
 }) {
   const { supabase, user } = await requireWorkspaceRole('student')
 
   if (!input.resourceId || !UUID_PATTERN.test(input.resourceId)) {
     throw new Error('The selected resource is invalid.')
+  }
+  if (!UUID_PATTERN.test(input.idempotencyKey)) {
+    throw new Error('This booking request could not be verified. Please try again.')
   }
 
   const startsAt = parseDate(input.startsAt)
@@ -64,52 +74,63 @@ export async function submitBookingRequest(input: {
     throw new Error('Describe the purpose of your booking in at least 15 characters.')
   }
 
-  if (endsAt <= startsAt || startsAt <= new Date()) {
+  if (
+    endsAt <= startsAt ||
+    (!reservationControlsEnabled && startsAt <= new Date())
+  ) {
     throw new Error(INVALID_TIME_MESSAGE)
   }
 
-  const { data: resource, error: resourceError } = await supabase
-    .from('resources')
-    .select('id, institution_id, availability, max_duration_hours, approval_mode, listed')
-    .eq('id', input.resourceId)
-    .eq('listed', true)
-    .maybeSingle()
+  if (!reservationControlsEnabled) {
+    const { data: resource, error: resourceError } = await supabase
+      .from('resources')
+      .select('id, institution_id, availability, max_duration_hours, approval_mode, listed')
+      .eq('id', input.resourceId)
+      .eq('listed', true)
+      .maybeSingle()
 
-  if (resourceError) throw resourceError
-  if (!resource || resource.availability === 'unavailable') {
-    throw new Error('This resource is not currently available for bookings.')
+    if (resourceError) throw resourceError
+    if (!resource || resource.availability === 'unavailable') {
+      throw new Error('This resource is not currently available for bookings.')
+    }
+
+    const durationHours = (endsAt.getTime() - startsAt.getTime()) / 3600000
+    if (durationHours > resource.max_duration_hours) {
+      throw new Error(`Sessions are limited to ${resource.max_duration_hours} hours for this resource.`)
+    }
+
+    const { data: existingBookings, error: lookupError } = await supabase
+      .from('bookings')
+      .select('id, starts_at, ends_at, status')
+      .eq('resource_id', input.resourceId)
+      .eq('requester_user_id', user.id)
+      .in('status', ['pending', 'approved', 'in_use'])
+
+    if (lookupError) throw lookupError
+
+    const hasOverlap = (existingBookings ?? []).some((booking) => {
+      const bookingStart = new Date(booking.starts_at)
+      const bookingEnd = new Date(booking.ends_at)
+      return bookingStart < endsAt && startsAt < bookingEnd
+    })
+
+    if (hasOverlap) {
+      throw new Error('You already have an overlapping booking request for this resource.')
+    }
   }
 
-  const durationHours = (endsAt.getTime() - startsAt.getTime()) / 3600000
-  if (durationHours > resource.max_duration_hours) {
-    throw new Error(`Sessions are limited to ${resource.max_duration_hours} hours for this resource.`)
-  }
-
-  const { data: existingBookings, error: lookupError } = await supabase
-    .from('bookings')
-    .select('id, starts_at, ends_at, status')
-    .eq('resource_id', input.resourceId)
-    .eq('requester_user_id', user.id)
-    .in('status', ['pending', 'approved', 'in_use'])
-
-  if (lookupError) throw lookupError
-
-  const hasOverlap = (existingBookings ?? []).some((booking) => {
-    const bookingStart = new Date(booking.starts_at)
-    const bookingEnd = new Date(booking.ends_at)
-    return bookingStart < endsAt && startsAt < bookingEnd
-  })
-
-  if (hasOverlap) {
-    throw new Error('You already have an overlapping booking request for this resource.')
-  }
-
-  const { data, error } = await supabase.rpc('request_resource_booking', {
+  const rpcArgs = {
     p_resource_id: input.resourceId,
     p_starts_at: input.startsAt,
     p_ends_at: input.endsAt,
     p_purpose: purpose,
-  })
+  }
+  const { data, error } = await supabase.rpc(
+    'request_resource_booking',
+    reservationControlsEnabled
+      ? { ...rpcArgs, p_idempotency_key: input.idempotencyKey }
+      : rpcArgs,
+  )
 
   if (error) {
     throw new Error(toRpcErrorMessage(error))
@@ -118,7 +139,8 @@ export async function submitBookingRequest(input: {
   revalidatePath('/student/bookings')
   revalidatePath('/student/dashboard')
   revalidatePath('/student/explore')
-  return { bookingId: data as string }
+  if (!data) throw new Error('The booking request did not return a booking reference.')
+  return { bookingId: data }
 }
 
 export async function reviewBookingRequest(input: {
