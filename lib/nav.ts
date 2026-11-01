@@ -88,6 +88,13 @@ export const NAV: Record<Role, NavGroup[]> = {
       items: [{ href: '/institution/dashboard', label: 'Verification requests', icon: ClipboardList }],
     },
     {
+      heading: 'Operations',
+      items: [
+        { href: '/institution/incidents', label: 'Incidents', icon: ShieldAlert },
+        { href: '/institution/activity', label: 'Activity history', icon: Activity },
+      ],
+    },
+    {
       heading: 'Account',
       items: [
         { href: '/institution/profile', label: 'My profile', icon: UserRound },

@@ -1,4 +1,4 @@
-CREATE TABLE resourcehub_private.institution_reservation_limits (
+CREATE TABLE IF NOT EXISTS resourcehub_private.institution_reservation_limits (
   institution_id uuid PRIMARY KEY
     REFERENCES public.institutions(id) ON DELETE CASCADE,
   max_active_reservations_per_user integer NOT NULL DEFAULT 3
@@ -8,7 +8,7 @@ CREATE TABLE resourcehub_private.institution_reservation_limits (
   updated_at timestamptz NOT NULL DEFAULT pg_catalog.now()
 );
 
-CREATE TABLE resourcehub_private.booking_request_idempotency (
+CREATE TABLE IF NOT EXISTS resourcehub_private.booking_request_idempotency (
   requester_user_id uuid NOT NULL
     REFERENCES public.profiles(id) ON DELETE CASCADE,
   idempotency_key uuid NOT NULL,
@@ -25,7 +25,7 @@ CREATE TABLE resourcehub_private.booking_request_idempotency (
   CHECK (length(pg_catalog.btrim(purpose)) BETWEEN 15 AND 5000)
 );
 
-CREATE TABLE resourcehub_private.booking_request_rate_limits (
+CREATE TABLE IF NOT EXISTS resourcehub_private.booking_request_rate_limits (
   requester_user_id uuid PRIMARY KEY
     REFERENCES public.profiles(id) ON DELETE CASCADE,
   recent_attempts timestamptz[] NOT NULL DEFAULT '{}',
@@ -46,7 +46,7 @@ REVOKE ALL ON resourcehub_private.booking_request_idempotency
 REVOKE ALL ON resourcehub_private.booking_request_rate_limits
   FROM PUBLIC, anon, authenticated, service_role;
 
-CREATE FUNCTION public.set_institution_reservation_limits(
+CREATE OR REPLACE FUNCTION public.set_institution_reservation_limits(
   p_institution_id uuid,
   p_max_active_reservations integer,
   p_max_concurrent_resources integer
@@ -124,7 +124,7 @@ REVOKE ALL ON FUNCTION public.set_institution_reservation_limits(uuid, integer, 
 GRANT EXECUTE ON FUNCTION public.set_institution_reservation_limits(uuid, integer, integer)
   TO authenticated;
 
-CREATE FUNCTION public.get_institution_reservation_limits(p_institution_id uuid)
+CREATE OR REPLACE FUNCTION public.get_institution_reservation_limits(p_institution_id uuid)
 RETURNS TABLE (
   max_active_reservations_per_user integer,
   max_concurrent_resources_per_user integer
@@ -165,7 +165,7 @@ REVOKE ALL ON FUNCTION public.get_institution_reservation_limits(uuid)
 GRANT EXECUTE ON FUNCTION public.get_institution_reservation_limits(uuid)
   TO authenticated;
 
-CREATE FUNCTION resourcehub_private.create_resource_booking(
+CREATE OR REPLACE FUNCTION resourcehub_private.create_resource_booking(
   p_resource_id uuid,
   p_starts_at timestamptz,
   p_ends_at timestamptz,
@@ -179,7 +179,7 @@ SET search_path = ''
 AS $$
 DECLARE
   v_actor uuid := auth.uid();
-  v_now timestamptz := pg_catalog.clock_timestamp();
+  v_now timestamptz;
   v_resource public.resources%rowtype;
   v_membership_id uuid;
   v_booking_id uuid;
@@ -209,6 +209,7 @@ BEGIN
   PERFORM pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended(v_actor::text, 0)
   );
+  v_now := pg_catalog.clock_timestamp();
 
   SELECT request.resource_id, request.starts_at, request.ends_at,
          request.purpose, request.booking_id
@@ -308,6 +309,8 @@ BEGIN
   WHERE rate_limit.requester_user_id = v_actor
   FOR UPDATE;
 
+  v_now := pg_catalog.clock_timestamp();
+
   SELECT COALESCE(
     pg_catalog.array_agg(attempt.attempted_at ORDER BY attempt.attempted_at),
     ARRAY[]::timestamptz[]
@@ -370,6 +373,12 @@ BEGIN
     WHEN v_resource.approval_mode = 'automatic' THEN 'approved'
     ELSE 'pending'
   END;
+
+  v_now := pg_catalog.clock_timestamp();
+  IF p_starts_at <= v_now THEN
+    RAISE EXCEPTION 'Booking details are invalid.'
+      USING errcode = '22023';
+  END IF;
 
   INSERT INTO public.bookings (
     institution_id,
@@ -479,7 +488,7 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION public.request_resource_booking(
+CREATE OR REPLACE FUNCTION public.request_resource_booking(
   p_resource_id uuid,
   p_starts_at timestamptz,
   p_ends_at timestamptz,

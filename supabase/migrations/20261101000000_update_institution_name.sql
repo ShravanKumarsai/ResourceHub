@@ -1,3 +1,21 @@
+DO $$
+DECLARE
+  v_existing_return_type oid;
+BEGIN
+  SELECT procedure.prorettype
+  INTO v_existing_return_type
+  FROM pg_catalog.pg_proc AS procedure
+  WHERE procedure.oid = pg_catalog.to_regprocedure(
+    'public.update_institution_name(uuid,text)'
+  );
+
+  IF FOUND AND v_existing_return_type <> 'public.institutions'::regtype THEN
+    RAISE EXCEPTION
+      'Existing public.update_institution_name(uuid,text) has an incompatible return type.';
+  END IF;
+END;
+$$;
+
 create or replace function public.update_institution_name(
   p_institution_id uuid,
   p_name text
