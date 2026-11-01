@@ -130,9 +130,11 @@ async function loadOwnerBookingData() {
       id: booking.id,
       resourceId: booking.resource_id,
       requesterId: booking.requester_user_id,
-      requesterName: requesterIdentities[booking.requester_user_id]?.name ?? 'Student',
+      requesterName:
+        requesterIdentities[booking.requester_user_id]?.name ?? requesterNames[booking.requester_user_id] ?? 'Student',
       requesterEmail: requesterIdentities[booking.requester_user_id]?.email ?? undefined,
-      requesterAffiliation: 'Verified institutional member',
+      requesterAffiliation:
+        requesterIdentities[booking.requester_user_id]?.name ?? requesterNames[booking.requester_user_id] ?? 'Verified institutional member',
       date: isoToLocalDate(booking.starts_at),
       start: start.toLocaleTimeString('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', hour12: false }),
       end: end.toLocaleTimeString('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', hour12: false }),
