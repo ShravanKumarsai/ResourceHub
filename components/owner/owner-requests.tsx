@@ -96,8 +96,24 @@ async function loadOwnerBookingData() {
   if (profileResult.error) throw profileResult.error
   if (conditionResult.error) throw conditionResult.error
 
+  const requesterIdentityResult = requesterIds.length
+    ? await supabase.rpc('list_owned_booking_requesters', {
+        p_requester_user_ids: requesterIds,
+      })
+    : { data: [], error: null }
+
+  if (requesterIdentityResult.error) throw requesterIdentityResult.error
+
   const resourceNames = Object.fromEntries((ownedResources ?? []).map((resource) => [resource.id, resource.name]))
-  const requesterNames = Object.fromEntries((profileResult.data ?? []).map((profile) => [profile.id, profile.display_name || 'Requester']))
+  const requesterIdentities = Object.fromEntries(
+    (requesterIdentityResult.data ?? []).map((identity) => [
+      identity.requester_user_id,
+      { name: identity.requester_name, email: identity.requester_email },
+    ]),
+  )
+  const requesterNames = Object.fromEntries(
+    (profileResult.data ?? []).map((profile) => [profile.id, profile.display_name || 'User']),
+  )
   const conditionsByBooking = new Map<string, { checkOut?: any; checkIn?: any }>()
   ;(conditionResult.data ?? []).forEach((report) => {
     const entry = conditionsByBooking.get(report.booking_id) ?? {}
@@ -114,7 +130,8 @@ async function loadOwnerBookingData() {
       id: booking.id,
       resourceId: booking.resource_id,
       requesterId: booking.requester_user_id,
-      requesterName: requesterNames[booking.requester_user_id] ?? 'Requester',
+      requesterName: requesterIdentities[booking.requester_user_id]?.name ?? 'Student',
+      requesterEmail: requesterIdentities[booking.requester_user_id]?.email ?? undefined,
       requesterAffiliation: 'Verified institutional member',
       date: isoToLocalDate(booking.starts_at),
       start: start.toLocaleTimeString('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', hour12: false }),
@@ -207,7 +224,15 @@ function RequestCard({
                 <UserRound className="size-4 text-teal" aria-hidden="true" />
                 <span className="font-medium text-ink">{booking.requesterName}</span>
               </div>
-              <p className="mt-2 text-xs text-ink-muted">Verified institutional member</p>
+              {booking.requesterEmail ? (
+                <a
+                  href={`mailto:${booking.requesterEmail}`}
+                  className="mt-2 block break-all text-xs text-ink-muted underline-offset-2 hover:underline"
+                >
+                  {booking.requesterEmail}
+                </a>
+              ) : null}
+              <p className="mt-2 text-xs text-ink-muted">{booking.requesterAffiliation}</p>
             </div>
             <div className="rounded-2xl border border-line bg-surface/60 p-3.5">
               <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-muted">Date & time</p>
@@ -283,6 +308,14 @@ function RequestCard({
               <div className="rounded-xl border border-line bg-surface/50 p-3">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-muted">Student</p>
                 <p className="mt-2 font-medium text-ink">{booking.requesterName}</p>
+                {booking.requesterEmail ? (
+                  <a
+                    href={`mailto:${booking.requesterEmail}`}
+                    className="mt-1 block break-all text-ink-muted underline-offset-2 hover:underline"
+                  >
+                    {booking.requesterEmail}
+                  </a>
+                ) : null}
                 <p className="mt-1 text-ink-muted">{booking.requesterAffiliation}</p>
               </div>
               <div className="rounded-xl border border-line bg-surface/50 p-3">
@@ -366,6 +399,7 @@ export function OwnerRequests() {
       const matchesSearch =
         !q ||
         booking.requesterName.toLowerCase().includes(q) ||
+        booking.requesterEmail?.toLowerCase().includes(q) ||
         resourceNames[booking.resourceId]?.toLowerCase().includes(q) ||
         booking.purpose.toLowerCase().includes(q)
 

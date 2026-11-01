@@ -110,6 +110,52 @@ values
     now() - interval '1 hour', now() + interval '1 hour',
     'Cross institution access test', 'approved');
 
+update public.profiles
+set display_name = 'Alex Student'
+where id = '00000000-0000-4000-8000-000000009601';
+
+select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000009602', true);
+select is(
+  (select requester_name
+   from public.list_owned_booking_requesters(
+     array['00000000-0000-4000-8000-000000009601'::uuid]
+   )),
+  'Alex Student',
+  'A resource owner can see the requester profile name for their resource'
+);
+select is(
+  (select requester_email
+   from public.list_owned_booking_requesters(
+     array['00000000-0000-4000-8000-000000009601'::uuid]
+   )),
+  'operational-student-a@example.invalid',
+  'A resource owner can see the requester email for their resource'
+);
+select is(
+  (select count(*)::integer
+   from public.list_owned_booking_requesters(
+     array['00000000-0000-4000-8000-000000009605'::uuid]
+   )),
+  0,
+  'A resource owner cannot inspect identity details of another owner’s requester'
+);
+select ok(
+  (select prosecdef and proconfig @> array['search_path=""']::text[]
+   from pg_catalog.pg_proc
+   where oid = 'public.list_owned_booking_requesters(uuid[])'::regprocedure)
+  and has_function_privilege(
+    'authenticated',
+    'public.list_owned_booking_requesters(uuid[])',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'anon',
+    'public.list_owned_booking_requesters(uuid[])',
+    'EXECUTE'
+  ),
+  'Requester identity lookup is a locked-down authenticated security-definer RPC'
+);
+
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000009601', true);
 

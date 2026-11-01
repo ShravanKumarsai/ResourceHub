@@ -2,10 +2,14 @@ import 'server-only'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 
-function isMissingAuthSession(error: { name?: string; message?: string } | null | undefined) {
+export function isMissingAuthSession(error: unknown) {
+  if (typeof error !== 'object' || error === null) return false
+
+  const authError = error as { name?: unknown; message?: unknown }
   return (
-    error?.name === 'AuthSessionMissingError' ||
-    /auth session missing/i.test(error?.message ?? '')
+    authError.name === 'AuthSessionMissingError' ||
+    (typeof authError.message === 'string' &&
+      /auth session missing/i.test(authError.message))
   )
 }
 
@@ -28,7 +32,7 @@ export async function requireAuthenticatedUser() {
 
     return { supabase, user: data.user }
   } catch (error) {
-    if (isMissingAuthSession(error as { name?: string; message?: string })) {
+    if (isMissingAuthSession(error)) {
       redirect('/login')
     }
 

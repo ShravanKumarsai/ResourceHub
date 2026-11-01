@@ -268,6 +268,7 @@ export type Database = {
       cancel_resource_waiting_list: { Args: { p_entry_id: string }; Returns: undefined }
       list_pending_membership_applicants: { Args: { p_institution_id: string }; Returns: { membership_id: string; requested_at: string; applicant_name: string | null; applicant_email: string | null; requested_role: string | null; status: string }[] }
       list_institution_membership_directory: { Args: { p_institution_id: string }; Returns: { membership_id: string; applicant_name: string | null; applicant_email: string | null; requested_role: string | null; approved_roles: string[]; status: string; requested_at: string; reviewed_at: string | null }[] }
+      list_owned_booking_requesters: { Args: { p_requester_user_ids: string[] }; Returns: { requester_user_id: string; requester_name: string; requester_email: string | null }[] }
       review_institution_membership: { Args: { p_membership_id: string; p_status: string; p_roles: string[] }; Returns: undefined }
       update_institution_name: { Args: { p_institution_id: string; p_name: string }; Returns: { id: string; name: string; slug: string; is_active: boolean; created_at: string; updated_at: string } }
       upsert_notification_push_subscription: { Args: { p_endpoint: string; p_p256dh: string; p_auth: string }; Returns: string }

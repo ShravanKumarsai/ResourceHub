@@ -1,5 +1,5 @@
 import 'server-only'
-import { requireAuthenticatedUser } from '@/lib/auth/server'
+import { isMissingAuthSession, requireAuthenticatedUser } from '@/lib/auth/server'
 import { requireWorkspaceRole } from '@/lib/auth/workspace'
 import { createClient } from '@/lib/supabase/server'
 import type { Database } from '@/lib/supabase/database.types'
@@ -143,9 +143,20 @@ export async function listOwnedResources() {
 
 export async function listMyFavoriteResourceIds() {
   const supabase = await createClient()
-  const { data: authData, error: authError } = await supabase.auth.getUser()
-  if (authError) throw authError
-  if (!authData.user) return []
+  let user
+  try {
+    const { data, error } = await supabase.auth.getUser()
+    if (error) {
+      if (isMissingAuthSession(error)) return []
+      throw error
+    }
+    user = data.user
+  } catch (error) {
+    if (isMissingAuthSession(error)) return []
+    throw error
+  }
+
+  if (!user) return []
 
   const { data, error } = await supabase
     .from('resource_favorites')

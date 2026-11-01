@@ -99,6 +99,7 @@ export interface Booking {
   resourceId: string
   requesterId: string
   requesterName: string
+  requesterEmail?: string
   requesterAffiliation: string
   date: string
   start: string
