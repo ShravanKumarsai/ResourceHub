@@ -162,6 +162,23 @@ VALUES
   ('legacy', now() + interval '45 days', now() + interval '45 days 1 hour'),
   ('review', now() + interval '50 days', now() + interval '50 days 1 hour');
 
+INSERT INTO public.bookings (
+  id, institution_id, resource_id, requester_membership_id, requester_user_id,
+  starts_at, ends_at, purpose, status
+)
+SELECT
+  '00000000-0000-4000-8000-000000009530',
+  '00000000-0000-4000-8000-000000009311',
+  '00000000-0000-4000-8000-000000009411',
+  '00000000-0000-4000-8000-000000009328',
+  '00000000-0000-4000-8000-000000009308',
+  slot.starts_at,
+  slot.ends_at,
+  'Existing confirmed booking for conflict validation',
+  'approved'
+FROM reservation_test_slots AS slot
+WHERE slot.slot_name = 'review';
+
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000009301', true);
 SELECT lives_ok(
@@ -490,8 +507,20 @@ SELECT throws_ok(
     '00000000-0000-4000-8000-000000009516'
   )$$,
   '23P01',
-  'conflicting key value violates exclusion constraint "bookings_no_confirmed_overlap"',
-  'The existing exclusion constraint prevents overlapping confirmed equipment bookings'
+  'This resource already has a confirmed booking for the requested time.',
+  'An overlapping confirmed booking is rejected before insertion'
+);
+SELECT throws_ok(
+  $$SELECT public.request_resource_booking(
+    '00000000-0000-4000-8000-000000009411',
+    (SELECT starts_at FROM reservation_test_slots WHERE slot_name = 'review'),
+    (SELECT ends_at FROM reservation_test_slots WHERE slot_name = 'review'),
+    'Pending request conflicts with confirmed booking',
+    '00000000-0000-4000-8000-000000009524'
+  )$$,
+  '23P01',
+  'This resource already has a confirmed booking for the requested time.',
+  'A pending request cannot overlap an existing confirmed booking'
 );
 
 SELECT lives_ok(
@@ -503,6 +532,41 @@ SELECT lives_ok(
     '00000000-0000-4000-8000-000000009517'
   )$$,
   'A future pending booking can be created for approval testing'
+);
+
+RESET ROLE;
+INSERT INTO public.bookings (
+  id, institution_id, resource_id, requester_membership_id, requester_user_id,
+  starts_at, ends_at, purpose, status
+)
+SELECT
+  '00000000-0000-4000-8000-000000009531',
+  booking.institution_id,
+  booking.resource_id,
+  '00000000-0000-4000-8000-000000009328',
+  '00000000-0000-4000-8000-000000009308',
+  booking.starts_at,
+  booking.ends_at,
+  'Confirmed booking added after pending request',
+  'approved'
+FROM public.bookings AS booking
+WHERE booking.requester_user_id = '00000000-0000-4000-8000-000000009307'
+  AND booking.resource_id = '00000000-0000-4000-8000-000000009421'
+  AND booking.status = 'pending';
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000009304', true);
+SELECT throws_ok(
+  $$SELECT public.review_resource_booking(
+    (SELECT id FROM public.bookings
+     WHERE requester_user_id = '00000000-0000-4000-8000-000000009307'
+       AND resource_id = '00000000-0000-4000-8000-000000009421'),
+    'approved',
+    NULL
+  )$$,
+  '23P01',
+  'This resource already has a confirmed booking for the requested time.',
+  'Approval rechecks conflicts without treating the reviewed booking as a conflict'
 );
 
 RESET ROLE;
@@ -524,6 +588,20 @@ SELECT throws_ok(
   '55000',
   'Booking start time has passed or the institution is inactive.',
   'A resource manager cannot approve a booking after its start time'
+);
+
+SELECT set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000009309', true);
+SELECT throws_ok(
+  $$SELECT public.request_resource_booking(
+    '00000000-0000-4000-8000-000000009411',
+    (SELECT starts_at FROM reservation_test_slots WHERE slot_name = 'r5'),
+    (SELECT ends_at FROM reservation_test_slots WHERE slot_name = 'r5'),
+    'Booking request from an unapproved member',
+    '00000000-0000-4000-8000-000000009532'
+  )$$,
+  '42501',
+  'Active student membership required.',
+  'A user without an active student role cannot request a booking'
 );
 
 SELECT set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000009305', true);
@@ -653,6 +731,21 @@ SELECT ok(
     )
   ) > 0,
   'Per-user booking checks retain transaction-scoped serialization'
+);
+SELECT ok(
+  position(
+    'resource-booking:'
+    IN pg_catalog.pg_get_functiondef(
+      'resourcehub_private.create_resource_booking(uuid,timestamp with time zone,timestamp with time zone,text,uuid)'::regprocedure
+    )
+  ) > 0
+  AND position(
+    'resource-booking:'
+    IN pg_catalog.pg_get_functiondef(
+      'public.review_resource_booking(uuid,text,text)'::regprocedure
+    )
+  ) > 0,
+  'Booking creation and approval serialize conflicts by resource'
 );
 SELECT ok(
   (SELECT prosecdef AND proconfig @> ARRAY['search_path=""']::text[]

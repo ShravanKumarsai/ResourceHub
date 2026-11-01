@@ -259,6 +259,13 @@ BEGIN
       USING errcode = 'P0002';
   END IF;
 
+  PERFORM pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(
+      'resource-booking:' || v_resource.id::text,
+      0
+    )
+  );
+
   IF p_ends_at - p_starts_at
     > pg_catalog.make_interval(hours => v_resource.max_duration_hours)
   THEN
@@ -329,6 +336,18 @@ BEGIN
   UPDATE resourcehub_private.booking_request_rate_limits
   SET recent_attempts = v_recent_attempts
   WHERE requester_user_id = v_actor;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.bookings AS booking
+    WHERE booking.resource_id = v_resource.id
+      AND booking.status IN ('approved', 'in_use')
+      AND pg_catalog.tstzrange(booking.starts_at, booking.ends_at, '[)')
+        && pg_catalog.tstzrange(p_starts_at, p_ends_at, '[)')
+  ) THEN
+    RAISE EXCEPTION 'This resource already has a confirmed booking for the requested time.'
+      USING errcode = '23P01';
+  END IF;
 
   IF EXISTS (
     SELECT 1
@@ -596,6 +615,28 @@ BEGIN
   THEN
     RAISE EXCEPTION 'Booking start time has passed or the institution is inactive.'
       USING errcode = '55000';
+  END IF;
+
+  IF p_decision = 'approved' THEN
+    PERFORM pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended(
+        'resource-booking:' || v_booking.resource_id::text,
+        0
+      )
+    );
+
+    IF EXISTS (
+      SELECT 1
+      FROM public.bookings AS booking
+      WHERE booking.resource_id = v_booking.resource_id
+        AND booking.id <> v_booking.id
+        AND booking.status IN ('approved', 'in_use')
+        AND pg_catalog.tstzrange(booking.starts_at, booking.ends_at, '[)')
+          && pg_catalog.tstzrange(v_booking.starts_at, v_booking.ends_at, '[)')
+    ) THEN
+      RAISE EXCEPTION 'This resource already has a confirmed booking for the requested time.'
+        USING errcode = '23P01';
+    END IF;
   END IF;
 
   UPDATE public.bookings

@@ -208,6 +208,20 @@ SELECT set_config(
   true
 );
 SELECT throws_ok(
+  $$SELECT public.restore_resource('00000000-0000-4000-8000-000000009731')$$,
+  '42501',
+  'Resource not found or you do not own it.',
+  'A non-owner cannot restore another user’s archived resource'
+);
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-4000-8000-000000009702',
+  true
+);
+SELECT throws_ok(
   $$SELECT public.request_resource_booking(
     '00000000-0000-4000-8000-000000009731',
     now() + interval '5 days',

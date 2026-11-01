@@ -17,7 +17,11 @@ VALUES
   ('00000000-0000-4000-8000-000000009403', 'authenticated', 'authenticated',
     'reservation-concurrency-idempotency@example.invalid', '', now(), '{}', '{}', now(), now()),
   ('00000000-0000-4000-8000-000000009404', 'authenticated', 'authenticated',
-    'reservation-concurrency-stale@example.invalid', '', now(), '{}', '{}', now(), now());
+    'reservation-concurrency-stale@example.invalid', '', now(), '{}', '{}', now(), now()),
+  ('00000000-0000-4000-8000-000000009405', 'authenticated', 'authenticated',
+    'reservation-concurrency-resource-a@example.invalid', '', now(), '{}', '{}', now(), now()),
+  ('00000000-0000-4000-8000-000000009406', 'authenticated', 'authenticated',
+    'reservation-concurrency-resource-b@example.invalid', '', now(), '{}', '{}', now(), now());
 
 INSERT INTO public.institutions (id, name, slug)
 VALUES (
@@ -41,14 +45,22 @@ VALUES
     '00000000-0000-4000-8000-000000009403', 'active', NULL, now(), now()),
   ('00000000-0000-4000-8000-000000009424',
     '00000000-0000-4000-8000-000000009411',
-    '00000000-0000-4000-8000-000000009404', 'active', NULL, now(), now());
+    '00000000-0000-4000-8000-000000009404', 'active', NULL, now(), now()),
+  ('00000000-0000-4000-8000-000000009425',
+    '00000000-0000-4000-8000-000000009411',
+    '00000000-0000-4000-8000-000000009405', 'active', NULL, now(), now()),
+  ('00000000-0000-4000-8000-000000009426',
+    '00000000-0000-4000-8000-000000009411',
+    '00000000-0000-4000-8000-000000009406', 'active', NULL, now(), now());
 
 INSERT INTO public.institution_membership_roles (membership_id, role)
 VALUES
   ('00000000-0000-4000-8000-000000009421', 'resource_owner'),
   ('00000000-0000-4000-8000-000000009422', 'student'),
   ('00000000-0000-4000-8000-000000009423', 'student'),
-  ('00000000-0000-4000-8000-000000009424', 'student');
+  ('00000000-0000-4000-8000-000000009424', 'student'),
+  ('00000000-0000-4000-8000-000000009425', 'student'),
+  ('00000000-0000-4000-8000-000000009426', 'student');
 
 INSERT INTO public.resources (
   id, institution_id, owner_membership_id, owner_user_id, name, category,
@@ -73,6 +85,10 @@ VALUES
     '00000000-0000-4000-8000-000000009401',
     'Concurrent equipment three', 'Equipment', 'Test lab',
     'A test resource with sufficient description length.', 'owner', true);
+
+UPDATE public.resources
+SET approval_mode = 'automatic'
+WHERE id = '00000000-0000-4000-8000-000000009431';
 
 INSERT INTO resourcehub_private.institution_reservation_limits (
   institution_id,
@@ -244,6 +260,78 @@ SELECT is(
 );
 
 SELECT extensions.dblink_connect(
+  'reservation_resource_a',
+  'dbname=' || current_database() || ' user=postgres application_name=reservation_resource_a'
+);
+SELECT extensions.dblink_connect(
+  'reservation_resource_b',
+  'dbname=' || current_database() || ' user=postgres application_name=reservation_resource_b'
+);
+SELECT extensions.dblink_exec('reservation_resource_a', 'SET ROLE authenticated');
+SELECT extensions.dblink_exec('reservation_resource_b', 'SET ROLE authenticated');
+SELECT extensions.dblink_exec(
+  'reservation_resource_a',
+  'SET request.jwt.claim.sub = ''00000000-0000-4000-8000-000000009405'''
+);
+SELECT extensions.dblink_exec(
+  'reservation_resource_b',
+  'SET request.jwt.claim.sub = ''00000000-0000-4000-8000-000000009406'''
+);
+
+SELECT extensions.dblink_send_query(
+  'reservation_resource_a',
+  $query$
+    SELECT public.request_resource_booking(
+      '00000000-0000-4000-8000-000000009431',
+      '2036-01-02 10:00:00+00',
+      '2036-01-02 11:00:00+00',
+      'Concurrent same-resource booking A',
+      '00000000-0000-4000-8000-000000009455'
+    )
+  $query$
+);
+SELECT extensions.dblink_send_query(
+  'reservation_resource_b',
+  $query$
+    SELECT public.request_resource_booking(
+      '00000000-0000-4000-8000-000000009431',
+      '2036-01-02 10:00:00+00',
+      '2036-01-02 11:00:00+00',
+      'Concurrent same-resource booking B',
+      '00000000-0000-4000-8000-000000009456'
+    )
+  $query$
+);
+
+INSERT INTO reservation_concurrency_results
+SELECT 'same-resource', result.booking_id
+FROM extensions.dblink_get_result('reservation_resource_a', false)
+  AS result(booking_id uuid);
+INSERT INTO reservation_concurrency_results
+SELECT 'same-resource', result.booking_id
+FROM extensions.dblink_get_result('reservation_resource_b', false)
+  AS result(booking_id uuid);
+SELECT * FROM extensions.dblink_get_result('reservation_resource_a', false)
+  AS result(booking_id uuid);
+SELECT * FROM extensions.dblink_get_result('reservation_resource_b', false)
+  AS result(booking_id uuid);
+
+SELECT is(
+  (SELECT pg_catalog.count(*) FROM reservation_concurrency_results
+   WHERE case_name = 'same-resource'),
+  1::bigint,
+  'Concurrent requests from different users cannot confirm overlapping bookings for one resource'
+);
+SELECT is(
+  (SELECT pg_catalog.count(*) FROM public.bookings
+   WHERE resource_id = '00000000-0000-4000-8000-000000009431'
+     AND starts_at = '2036-01-02 10:00:00+00'
+     AND status = 'approved'),
+  1::bigint,
+  'Resource-level conflict protection persists exactly one confirmed booking'
+);
+
+SELECT extensions.dblink_connect(
   'reservation_stale_lock',
   'dbname=' || current_database() || ' user=postgres application_name=reservation_stale_lock'
 );
@@ -343,6 +431,8 @@ SELECT extensions.dblink_disconnect('reservation_limit_a');
 SELECT extensions.dblink_disconnect('reservation_limit_b');
 SELECT extensions.dblink_disconnect('reservation_idempotency_a');
 SELECT extensions.dblink_disconnect('reservation_idempotency_b');
+SELECT extensions.dblink_disconnect('reservation_resource_a');
+SELECT extensions.dblink_disconnect('reservation_resource_b');
 SELECT extensions.dblink_disconnect('reservation_stale_lock');
 SELECT extensions.dblink_disconnect('reservation_stale_rpc');
 
@@ -357,7 +447,7 @@ WHERE institution_id = '00000000-0000-4000-8000-000000009411';
 DELETE FROM public.institution_membership_roles
 WHERE membership_id BETWEEN
   '00000000-0000-4000-8000-000000009421'::uuid
-  AND '00000000-0000-4000-8000-000000009424'::uuid;
+  AND '00000000-0000-4000-8000-000000009426'::uuid;
 DELETE FROM public.institution_memberships
 WHERE institution_id = '00000000-0000-4000-8000-000000009411';
 DELETE FROM resourcehub_private.institution_reservation_limits
@@ -373,6 +463,6 @@ WHERE id = '00000000-0000-4000-8000-000000009411';
 DELETE FROM auth.users
 WHERE id BETWEEN
   '00000000-0000-4000-8000-000000009401'::uuid
-  AND '00000000-0000-4000-8000-000000009404'::uuid;
+  AND '00000000-0000-4000-8000-000000009406'::uuid;
 
 SELECT * FROM finish();

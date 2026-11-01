@@ -85,6 +85,77 @@ VALUES
     '2035-01-02 13:00:00+00', '2035-01-02 14:00:00+00',
     'Pending availability test booking', 'pending');
 
+SELECT ok(
+  (SELECT count(*) = 10
+   FROM pg_catalog.pg_attribute AS attribute
+   WHERE attribute.attrelid = 'public.waiting_list_entries'::regclass
+     AND attribute.attname = ANY (ARRAY[
+       'id', 'institution_id', 'resource_id', 'requester_membership_id',
+       'requester_user_id', 'starts_at', 'ends_at', 'status', 'created_at',
+       'updated_at'
+     ])
+     AND NOT attribute.attisdropped),
+  'The pre-existing waiting-list table exposes every column used by its RPCs'
+);
+SELECT ok(
+  (SELECT relation.relrowsecurity
+   FROM pg_catalog.pg_class AS relation
+   WHERE relation.oid = 'public.waiting_list_entries'::regclass),
+  'The pre-existing waiting-list table retains row-level security'
+);
+SELECT ok(
+  EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_index AS index_row
+    WHERE index_row.indrelid = 'public.waiting_list_entries'::regclass
+      AND index_row.indisunique
+      AND index_row.indisvalid
+      AND pg_catalog.pg_get_indexdef(index_row.indexrelid)
+        LIKE '%(resource_id, requester_user_id, starts_at, ends_at)%'
+      AND pg_catalog.pg_get_expr(index_row.indpred, index_row.indrelid)
+        ILIKE '%waiting%'
+      AND pg_catalog.pg_get_expr(index_row.indpred, index_row.indrelid)
+        ILIKE '%offered%'
+      AND pg_catalog.pg_get_expr(index_row.indpred, index_row.indrelid)
+        ILIKE '%accepted%'
+  ),
+  'The pre-existing table has the active-request partial unique index required by ON CONFLICT'
+);
+SELECT ok(
+  EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_constraint AS constraint_row
+    WHERE constraint_row.conrelid = 'public.waiting_list_entries'::regclass
+      AND constraint_row.contype = 'c'
+      AND pg_catalog.pg_get_constraintdef(constraint_row.oid) ILIKE '%ends_at > starts_at%'
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_constraint AS constraint_row
+    WHERE constraint_row.conrelid = 'public.waiting_list_entries'::regclass
+      AND constraint_row.contype = 'c'
+      AND pg_catalog.pg_get_constraintdef(constraint_row.oid) ILIKE '%status%'
+      AND pg_catalog.pg_get_constraintdef(constraint_row.oid) ILIKE '%waiting%'
+      AND pg_catalog.pg_get_constraintdef(constraint_row.oid) ILIKE '%offered%'
+      AND pg_catalog.pg_get_constraintdef(constraint_row.oid) ILIKE '%accepted%'
+      AND pg_catalog.pg_get_constraintdef(constraint_row.oid) ILIKE '%expired%'
+      AND pg_catalog.pg_get_constraintdef(constraint_row.oid) ILIKE '%cancelled%'
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_constraint AS constraint_row
+    WHERE constraint_row.conrelid = 'public.waiting_list_entries'::regclass
+      AND constraint_row.contype = 'p'
+  )
+  AND (
+    SELECT count(*) = 4
+    FROM pg_catalog.pg_constraint AS constraint_row
+    WHERE constraint_row.conrelid = 'public.waiting_list_entries'::regclass
+      AND constraint_row.contype = 'f'
+  ),
+  'The pre-existing table retains its primary key, interval/status checks and all four foreign keys'
+);
+
 SELECT set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000009811', true);
 
 SELECT is(

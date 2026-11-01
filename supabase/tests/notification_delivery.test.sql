@@ -151,6 +151,27 @@ select ok(
 );
 
 select ok(
+  (select relation.relrowsecurity
+   from pg_catalog.pg_class as relation
+   where relation.oid = 'public.notifications'::regclass)
+  and exists (
+    select 1
+    from pg_catalog.pg_policies as policy
+    where policy.schemaname = 'public'
+      and policy.tablename = 'notifications'
+      and policy.policyname = 'Users can read their own notifications'
+  )
+  and exists (
+    select 1
+    from pg_catalog.pg_policies as policy
+    where policy.schemaname = 'public'
+      and policy.tablename = 'notifications'
+      and policy.policyname = 'Users can update their own notification read time'
+  ),
+  'The delivery migration preserves the existing in-app notification RLS policies'
+);
+
+select ok(
   has_function_privilege(
     'authenticated',
     'public.upsert_notification_push_subscription(text, text, text)',
@@ -181,6 +202,29 @@ select is(
   (select count(*)::integer from public.notification_preferences),
   1,
   'users can read only their own notification preferences'
+);
+
+select is(
+  (select count(*)::integer from public.notifications),
+  1,
+  'the existing in-app notification list remains scoped to the authenticated recipient'
+);
+select is(
+  (with updated as (
+     update public.notifications
+     set read_at = now()
+     where recipient_id = '00000000-0000-4000-8000-000000009702'
+     returning id
+   )
+   select count(*)::integer from updated),
+  0,
+  'a user cannot change another recipient’s in-app notification'
+);
+select lives_ok(
+  $$update public.notifications
+    set read_at = now()
+    where id = '00000000-0000-4000-8000-000000009704'$$,
+  'a user can mark their own in-app notification as read'
 );
 
 select lives_ok(
