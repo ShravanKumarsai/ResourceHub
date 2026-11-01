@@ -168,7 +168,9 @@ export type Database = {
     }
     Views: Record<string, never>
     Functions: {
-      request_resource_booking: { Args: { p_resource_id: string; p_starts_at: string; p_ends_at: string; p_purpose: string }; Returns: string }
+      request_resource_booking: { Args: { p_resource_id: string; p_starts_at: string; p_ends_at: string; p_purpose: string; p_idempotency_key?: string }; Returns: string }
+      get_institution_reservation_limits: { Args: { p_institution_id: string }; Returns: { max_active_reservations_per_user: number; max_concurrent_resources_per_user: number }[] }
+      set_institution_reservation_limits: { Args: { p_institution_id: string; p_max_active_reservations: number; p_max_concurrent_resources: number }; Returns: undefined }
       review_resource_booking: { Args: { p_booking_id: string; p_decision: string; p_note?: string | null }; Returns: undefined }
       cancel_resource_booking: { Args: { p_booking_id: string }; Returns: undefined }
       record_booking_condition_report: { Args: { p_booking_id: string; p_phase: string; p_rating: string; p_notes: string; p_checklist: string[] }; Returns: string }

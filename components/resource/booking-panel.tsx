@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Info } from 'lucide-react'
 import { toast } from 'sonner'
 import { joinWaitingListRequest, submitBookingRequest } from '@/app/bookings/actions'
@@ -61,6 +61,7 @@ export function BookingPanel({ resource, bookingsHref }: { resource: Resource; b
   const [touched, setTouched] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isJoiningWaitlist, setIsJoiningWaitlist] = useState(false)
+  const idempotencyRequest = useRef<{ fingerprint: string; key: string } | null>(null)
 
   const today = getTodayIso()
   const duration = durationHours(start, end)
@@ -113,12 +114,24 @@ export function BookingPanel({ resource, bookingsHref }: { resource: Resource; b
 
     setIsSubmitting(true)
     try {
-      const { bookingId } = await submitBookingRequest({
+      const request = {
         resourceId: resource.id,
         startsAt: new Date(`${date}T${start}:00Z`).toISOString(),
         endsAt: new Date(`${date}T${end}:00Z`).toISOString(),
         purpose: purpose.trim(),
+      }
+      const fingerprint = JSON.stringify(request)
+      let requestKey = idempotencyRequest.current
+      if (requestKey?.fingerprint !== fingerprint) {
+        requestKey = { fingerprint, key: crypto.randomUUID() }
+        idempotencyRequest.current = requestKey
+      }
+
+      const { bookingId } = await submitBookingRequest({
+        ...request,
+        idempotencyKey: requestKey.key,
       })
+      idempotencyRequest.current = null
 
       const nextStatus: Booking['status'] = resource.approval === 'Automatic confirmation' ? 'approved' : 'pending'
       const nextBooking: Booking = {

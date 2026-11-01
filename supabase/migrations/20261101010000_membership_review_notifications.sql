@@ -8,7 +8,8 @@ declare
   v_institution_name text;
   v_role_name text;
 begin
-  if old.status <> 'pending'
+  if old.status is distinct from 'pending'
+    or new.status is not distinct from old.status
     or new.status not in ('active', 'rejected')
     or new.user_id is null
   then
@@ -55,6 +56,9 @@ $$;
 
 revoke all on function resourcehub_private.notify_membership_review_result()
   from public, anon, authenticated, service_role;
+
+drop trigger if exists institution_memberships_notify_review_result
+  on public.institution_memberships;
 
 create trigger institution_memberships_notify_review_result
 after update of status on public.institution_memberships
