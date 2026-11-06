@@ -285,6 +285,10 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: number
       }
+      get_public_landing_stats: {
+        Args: Record<PropertyKey, never>
+        Returns: { institutions_participating: number; resources_available: number }[]
+      }
     }
     Enums: Record<string, never>
     CompositeTypes: Record<string, never>

@@ -5,24 +5,15 @@ import { createClient } from '@/lib/supabase/server'
 import { getOptionalSupabaseConfig } from '@/lib/supabase/config'
 import { HeroSearch } from './hero-search'
 
-function formatCount(value: number | null | undefined) {
-  if (value === null || value === undefined) return 'Unavailable'
+function formatCount(value: number) {
   return new Intl.NumberFormat('en-US').format(value)
-}
-
-function formatPercent(value: number | null | undefined) {
-  if (value === null || value === undefined) return 'Unavailable'
-  return `${Math.round(value)}%`
 }
 
 function unavailableLandingStats() {
   return {
-    institutions: [],
     stats: [
-      { label: 'Participating institutions', value: 'Unavailable' },
-      { label: 'Resource categories', value: 'Unavailable' },
-      { label: 'Bookings completed', value: 'Unavailable' },
-      { label: 'Resources returned in good condition', value: 'Unavailable' },
+      { label: 'Institutions Participating', value: 'Unavailable' },
+      { label: 'Resources Available', value: 'Unavailable' },
     ],
   }
 }
@@ -34,55 +25,21 @@ async function getLandingStats() {
 
   try {
     const supabase = await createClient()
+    const { data, error } = await supabase.rpc('get_public_landing_stats')
+    if (error) throw error
 
-    const [
-      institutionCountResult,
-      institutionsResult,
-      categoriesResult,
-      completedBookingsResult,
-      checkInReportsResult,
-    ] = await Promise.all([
-      supabase.from('institutions').select('id', { count: 'exact', head: true }).eq('is_active', true),
-      supabase.from('institutions').select('name').eq('is_active', true).order('name'),
-      supabase.from('resources').select('category').eq('listed', true),
-      supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('status', 'completed'),
-      supabase.from('condition_reports').select('rating').eq('phase', 'check_in'),
-    ])
-
-    const institutionCount = institutionCountResult.error ? null : institutionCountResult.count ?? 0
-    const institutions = institutionsResult.error
-      ? []
-      : (institutionsResult.data ?? []).map((institution) => institution.name)
-    const listedCategories = categoriesResult.error ? null : categoriesResult.data ?? []
-    const categoryCount = listedCategories ? new Set(listedCategories.map((row) => row.category).filter(Boolean)).size : null
-    const completedBookingsCount = completedBookingsResult.error ? null : completedBookingsResult.count ?? 0
-
-    let goodReturnRate: number | null = null
-    if (!checkInReportsResult.error) {
-      const reports = checkInReportsResult.data ?? []
-      const total = reports.length
-      const goodReturns = reports.filter((report) => ['excellent', 'good'].includes(report.rating)).length
-      goodReturnRate = total > 0 ? (goodReturns / total) * 100 : null
-    }
+    const counts = data?.[0]
+    if (!counts) throw new Error('The public landing statistics query returned no result.')
 
     return {
-      institutions,
       stats: [
         {
-          label: 'Participating institutions',
-          value: institutionCount === null ? 'Unavailable' : formatCount(institutionCount),
+          label: 'Institutions Participating',
+          value: formatCount(counts.institutions_participating),
         },
         {
-          label: 'Resource categories',
-          value: categoryCount === null ? 'Unavailable' : formatCount(categoryCount),
-        },
-        {
-          label: 'Bookings completed',
-          value: completedBookingsCount === null ? 'Unavailable' : formatCount(completedBookingsCount),
-        },
-        {
-          label: 'Resources returned in good condition',
-          value: goodReturnRate === null ? 'Unavailable' : formatPercent(goodReturnRate),
+          label: 'Resources Available',
+          value: formatCount(counts.resources_available),
         },
       ],
     }
@@ -101,7 +58,7 @@ async function getLandingStats() {
 }
 
 export async function Hero() {
-  const { stats, institutions } = await getLandingStats()
+  const { stats } = await getLandingStats()
 
   return (
     <section className="border-line border-b bg-canvas">
@@ -136,8 +93,8 @@ export async function Hero() {
         </div>
       </div>
       <div className="container-page pb-12 lg:-mt-6 lg:pb-16">
-        <HeroSearch institutions={institutions} />
-        <dl className="mt-8 grid grid-cols-2 gap-6 lg:grid-cols-4">
+        <HeroSearch />
+        <dl className="mt-8 grid grid-cols-2 gap-6">
           {stats.map((s) => (
             <div key={s.label} className="border-line border-l-2 pl-4">
               <dt className="text-ink-muted order-2 text-[13px]">{s.label}</dt>

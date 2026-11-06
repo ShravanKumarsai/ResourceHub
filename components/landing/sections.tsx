@@ -7,13 +7,12 @@ import {
   ShieldCheck,
   Siren,
   UserCheck,
-  Building2,
   History,
 } from 'lucide-react'
 import { unstable_rethrow } from 'next/navigation'
 import { ResourceCard } from '@/components/resource-card'
 import { buttonVariants } from '@/components/ui/button'
-import { listActiveInstitutionNames, listListedResources } from '@/lib/resources/queries'
+import { listListedResources } from '@/lib/resources/queries'
 import type { Resource } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -92,7 +91,7 @@ export async function LiveResourceShowcase() {
               <ResourceCard
                 key={resource.id}
                 resource={resource}
-                href={`/resources/${resource.id}`}
+                showInstitution={false}
               />
             ))}
           </div>
@@ -257,23 +256,7 @@ export function ForInstitutions() {
   )
 }
 
-export async function About() {
-  let institutions: string[]
-  try {
-    institutions = await listActiveInstitutionNames()
-  } catch (error) {
-    unstable_rethrow(error)
-    const message =
-      typeof error === 'object' &&
-      error !== null &&
-      'message' in error &&
-      typeof error.message === 'string'
-        ? error.message
-        : 'Unknown institution query error'
-    console.error('Could not load homepage institution directory.', { message })
-    institutions = []
-  }
-
+export function About() {
   return (
     <section id="about" className="bg-canvas border-line scroll-mt-20 border-t py-16 lg:py-20">
       <div className="container-page grid gap-10 lg:grid-cols-2">
@@ -282,25 +265,10 @@ export async function About() {
           title="Specialist equipment should not sit idle behind one department."
           description="ResourceHub is a shared access platform for engineering institutions. It helps capital equipment reach more learners and researchers while keeping owners in control of safety, scheduling, and care."
         />
-        <div>
-          <h3 className="text-ink flex items-center gap-2 text-sm font-semibold">
-            <Building2 className="text-teal size-4" aria-hidden="true" />
-            Participating institutions
-          </h3>
-          {institutions.length ? (
-            <ul className="border-line mt-4 divide-y divide-line-muted rounded-xl border bg-white">
-              {institutions.map((institution) => (
-                <li key={institution} className="px-4 py-3.5 text-sm font-medium">
-                  {institution}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="border-line text-ink-muted mt-4 rounded-xl border bg-white p-4 text-sm">
-              The institution directory is temporarily unavailable.
-            </p>
-          )}
-        </div>
+        <p className="text-ink-muted self-center text-base leading-7 text-pretty">
+          Browse publicly listed equipment, compare capabilities, and discover shared resources
+          without needing an account.
+        </p>
       </div>
     </section>
   )

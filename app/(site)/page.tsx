@@ -28,15 +28,7 @@ export default function LandingPage() {
       <HowItWorks />
       <Governance />
       <ForInstitutions />
-      <Suspense
-        fallback={
-          <div className="container-page py-12 text-sm text-ink-muted" aria-busy="true">
-            Loading institution directory…
-          </div>
-        }
-      >
-        <About />
-      </Suspense>
+      <About />
       <FinalCta />
     </>
   )
