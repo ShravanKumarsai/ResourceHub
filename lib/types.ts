@@ -92,11 +92,13 @@ export interface ConditionReport {
   checklist: string[]
   recordedAt: string
   recordedBy: string
+  evidencePaths?: string[]
 }
 
 export interface Booking {
   id: string
   resourceId: string
+  institutionId?: string
   requesterId: string
   requesterName: string
   requesterEmail?: string

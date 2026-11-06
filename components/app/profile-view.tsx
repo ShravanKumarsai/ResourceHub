@@ -3,6 +3,7 @@ import { requireInstitutionAdmin } from '@/lib/auth/institution-admin'
 import { requireWorkspaceRole } from '@/lib/auth/workspace'
 import { resolveDisplayName } from '@/lib/identity'
 import { ROLE_LABEL } from '@/lib/nav'
+import { logSupabaseError } from '@/lib/supabase/dev-error'
 import type { Role } from '@/lib/types'
 
 const MEMBERSHIP_ROLE_LABEL: Record<string, string> = {
@@ -40,7 +41,7 @@ export async function ProfileView({ role }: { role: Role }) {
 
   async function loadStats() {
     if (role === 'student') {
-      const [total, approved, incidents] = await Promise.all([
+      const [total, approved, incidents, lateReturns] = await Promise.all([
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('requester_user_id', user.id),
         supabase
           .from('bookings')
@@ -48,8 +49,12 @@ export async function ProfileView({ role }: { role: Role }) {
           .eq('requester_user_id', user.id)
           .eq('status', 'approved'),
         supabase.from('incidents').select('id', { count: 'exact', head: true }).eq('reporter_user_id', user.id),
+        supabase.rpc('get_my_late_return_summary'),
       ])
-      return { total, approved, incidents }
+      if (lateReturns.error) {
+        logSupabaseError('Loading profile late-return summary failed', lateReturns.error)
+      }
+      return { total, approved, incidents, lateReturns }
     }
     if (role === 'owner') {
       const resources = await supabase
@@ -94,11 +99,33 @@ export async function ProfileView({ role }: { role: Role }) {
       total: { count: number | null; error: unknown }
       approved: { count: number | null; error: unknown }
       incidents: { count: number | null; error: unknown }
+      lateReturns: {
+        data: {
+          institution_id: string
+          institution_name: string
+          late_flag_count: number
+          late_flag_threshold: number
+        }[] | null
+        error: unknown
+      }
     }
     statCards = [
       { label: 'Bookings made', value: countOrDash(stats.total), hint: 'Across your activity' },
       { label: 'Approved', value: countOrDash(stats.approved), hint: 'Confirmed sessions' },
       { label: 'Incidents', value: countOrDash(stats.incidents), hint: 'Logged to date' },
+      ...(stats.lateReturns.error
+        ? [{
+            label: 'Late returns',
+            value: '—',
+            hint: 'Late-return counts could not be loaded',
+          }]
+        : (stats.lateReturns.data ?? []).map((item) => ({
+            label: `Late returns · ${item.institution_name}`,
+            value: `${item.late_flag_count} / ${item.late_flag_threshold}`,
+            hint: item.late_flag_count >= item.late_flag_threshold
+              ? 'Late-return threshold reached'
+              : 'Institution threshold',
+          }))),
     ]
   } else if (role === 'owner') {
     const stats = statResults as { resources: { count: number | null; error: unknown } }

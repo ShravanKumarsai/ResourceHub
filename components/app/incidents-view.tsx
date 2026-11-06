@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
 import { INCIDENT_STATUS_LABEL, SEVERITY_LABEL, formatDateTime } from '@/lib/format'
+import { createClient } from '@/lib/supabase/client'
 import type {
   IncidentWorkspaceData,
   IncidentWorkspaceRecord,
@@ -47,6 +48,8 @@ function ReportDialog({
   const [severity, setSeverity] = useState<IncidentSeverity>('medium')
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
+  const [evidenceFiles, setEvidenceFiles] = useState<File[]>([])
+  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID())
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -56,16 +59,54 @@ function ReportDialog({
   const resourceNames = new Map(
     workspace.resources.map((resource) => [resource.id, resource.name]),
   )
+  const selectedResource = workspace.resources.find((resource) => resource.id === resourceId)
+
+  function rotateIdempotencyKey() {
+    setIdempotencyKey(crypto.randomUUID())
+  }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError('')
+    if (
+      evidenceFiles.length > 8 ||
+      evidenceFiles.some((file) => file.size > 10 * 1024 * 1024 ||
+        !['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(file.type))
+    ) {
+      setError('Attach up to 8 JPEG, PNG, WebP, or PDF files, each no larger than 10 MB.')
+      return
+    }
     setSaving(true)
 
+    const supabase = createClient()
+    const evidencePaths: string[] = []
     try {
       const selectedBooking = role === 'student'
         ? workspace.bookings.find((booking) => booking.id === bookingId)
         : bookingsForResource.find((booking) => booking.id === bookingId)
+      if (evidenceFiles.length && !selectedResource) {
+        throw new Error('The institution for the selected resource could not be resolved.')
+      }
+      const { data: userData, error: userError } = await supabase.auth.getUser()
+      if (userError) throw userError
+      if (!userData.user) throw new Error('Sign in before reporting an incident.')
+
+      for (const [index, file] of evidenceFiles.entries()) {
+        const extension = file.type === 'image/jpeg'
+          ? 'jpg'
+          : file.type === 'image/png'
+            ? 'png'
+            : file.type === 'image/webp'
+              ? 'webp'
+              : 'pdf'
+        const path = `${selectedResource?.institutionId}/${resourceId}/${bookingId || 'none'}/${userData.user.id}/${idempotencyKey}/${index}.${extension}`
+        const { error: uploadError } = await supabase.storage
+          .from('incident-evidence')
+          .upload(path, file, { contentType: file.type, upsert: true })
+        if (uploadError) throw uploadError
+        evidencePaths.push(path)
+      }
+
       const result = await reportIncident({
         role,
         resourceId: role === 'student' ? selectedBooking?.resourceId ?? '' : resourceId,
@@ -73,6 +114,8 @@ function ReportDialog({
         severity,
         title,
         description,
+        evidencePaths,
+        idempotencyKey,
       })
       toast.success('Incident reported', {
         description: `Report ${result.incidentId} was saved.`,
@@ -80,6 +123,14 @@ function ReportDialog({
       await onComplete()
       onOpenChange(false)
     } catch (submitError) {
+      if (evidencePaths.length) {
+        const { error: cleanupError } = await supabase.storage
+          .from('incident-evidence')
+          .remove(evidencePaths)
+        if (cleanupError) {
+          console.error('Could not remove unused incident evidence.', cleanupError)
+        }
+      }
       const message = submitError instanceof Error
         ? submitError.message
         : 'The incident report could not be saved.'
@@ -113,6 +164,7 @@ function ReportDialog({
                 onChange={(event) => {
                   const nextBookingId = event.target.value
                   setBookingId(nextBookingId)
+                  rotateIdempotencyKey()
                   setResourceId(
                     workspace.bookings.find((booking) => booking.id === nextBookingId)?.resourceId ?? '',
                   )
@@ -145,6 +197,7 @@ function ReportDialog({
                   onChange={(event) => {
                     setResourceId(event.target.value)
                     setBookingId('')
+                    rotateIdempotencyKey()
                   }}
                 >
                   <option value="">Choose a resource</option>
@@ -161,7 +214,10 @@ function ReportDialog({
                   <NativeSelect
                     id="incident-booking"
                     value={bookingId}
-                    onChange={(event) => setBookingId(event.target.value)}
+                    onChange={(event) => {
+                      setBookingId(event.target.value)
+                      rotateIdempotencyKey()
+                    }}
                   >
                     <option value="">No booking selected</option>
                     {bookingsForResource.map((booking) => (
@@ -182,7 +238,10 @@ function ReportDialog({
             <NativeSelect
               id="incident-severity"
               value={severity}
-              onChange={(event) => setSeverity(event.target.value as IncidentSeverity)}
+              onChange={(event) => {
+                setSeverity(event.target.value as IncidentSeverity)
+                rotateIdempotencyKey()
+              }}
             >
               {(Object.keys(SEVERITY_LABEL) as IncidentSeverity[]).map((value) => (
                 <option key={value} value={value}>{SEVERITY_LABEL[value]}</option>
@@ -199,7 +258,10 @@ function ReportDialog({
               maxLength={200}
               required
               value={title}
-              onChange={(event) => setTitle(event.target.value)}
+              onChange={(event) => {
+                setTitle(event.target.value)
+                rotateIdempotencyKey()
+              }}
             />
           </div>
           <div>
@@ -213,8 +275,30 @@ function ReportDialog({
               required
               rows={4}
               value={description}
-              onChange={(event) => setDescription(event.target.value)}
+              onChange={(event) => {
+                setDescription(event.target.value)
+                rotateIdempotencyKey()
+              }}
             />
+          </div>
+          <div>
+            <label htmlFor="incident-evidence" className="mb-1.5 block text-sm font-medium">
+              Evidence <span className="text-ink-muted font-normal">(optional)</span>
+            </label>
+            <input
+              id="incident-evidence"
+              type="file"
+              multiple
+              accept="image/jpeg,image/png,image/webp,application/pdf"
+              onChange={(event) => {
+                setEvidenceFiles(Array.from(event.target.files ?? []))
+                rotateIdempotencyKey()
+              }}
+              className="text-ink-muted block w-full text-sm file:mr-3 file:rounded-md file:border file:border-line file:bg-white file:px-3 file:py-1.5"
+            />
+            <p className="text-ink-muted mt-1 text-xs">
+              Up to 8 JPEG, PNG, WebP, or PDF files, 10 MB each.
+            </p>
           </div>
           {error ? <p role="alert" className="text-status-rejected text-sm">{error}</p> : null}
           <DialogFooter>
@@ -280,10 +364,41 @@ function IncidentCard({
       <p className="text-ink-muted mt-0.5 text-[13px]">
         {resourceName} · reported by {incident.reportedBy} on {formatDateTime(incident.createdAt)}
       </p>
+      {role === 'owner' &&
+      incident.lateFlagCount !== null &&
+      incident.lateFlagThreshold !== null ? (
+        <p
+          className={
+            incident.lateFlagCount >= incident.lateFlagThreshold
+              ? 'mt-2 w-fit rounded-full bg-status-rejected-bg px-3 py-1 text-xs font-medium text-status-rejected'
+              : 'mt-2 w-fit rounded-full bg-surface px-3 py-1 text-xs font-medium text-ink-muted'
+          }
+        >
+          {incident.lateFlagCount >= incident.lateFlagThreshold
+            ? `Late-return threshold reached (${incident.lateFlagCount} flags)`
+            : `Late returns: ${incident.lateFlagCount} / ${incident.lateFlagThreshold}`}
+        </p>
+      ) : null}
       {incident.bookingId ? (
         <p className="text-ink-muted mt-1 text-xs">Booking {incident.bookingId}</p>
       ) : null}
       <p className="mt-3 whitespace-pre-wrap text-sm leading-6">{incident.description}</p>
+      {incident.evidenceUrls.length ? (
+        <ul className="mt-3 flex flex-wrap gap-2">
+          {incident.evidenceUrls.map((url, index) => (
+            <li key={url}>
+              <a
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-teal hover:text-navy text-sm font-medium underline"
+              >
+                Evidence {index + 1}
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       <ol className="border-line-muted mt-4 space-y-2 border-l pl-4">
         {incident.history.map((event) => (

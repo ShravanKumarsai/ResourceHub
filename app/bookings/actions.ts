@@ -305,6 +305,7 @@ export async function recordBookingCondition(input: {
   rating: 'excellent' | 'good' | 'minor_wear' | 'damaged'
   notes: string
   checklist: string[]
+  evidencePaths?: string[]
 }) {
   if (!input || typeof input !== 'object') {
     throw new Error('The handover report is invalid.')
@@ -319,6 +320,10 @@ export async function recordBookingCondition(input: {
     !['excellent', 'good', 'minor_wear', 'damaged'].includes(input.rating) ||
     typeof input.notes !== 'string' ||
     input.notes.length > 2000 ||
+    (input.evidencePaths !== undefined &&
+      (!Array.isArray(input.evidencePaths) ||
+        input.evidencePaths.length > 8 ||
+        input.evidencePaths.some((path) => typeof path !== 'string' || path.length > 300))) ||
     !Array.isArray(input.checklist) ||
     input.checklist.length === 0 ||
     input.checklist.length > 100 ||
@@ -361,25 +366,12 @@ export async function recordBookingCondition(input: {
   const roleNames = new Set((roles ?? []).map((membershipRole) => membershipRole.role))
   const isEligibleStudent =
     booking.requester_user_id === user.id && roleNames.has('student')
-  let isResourceManager = false
-
-  if (!isEligibleStudent && roleNames.has('resource_owner')) {
-    const { data: resource, error: resourceError } = await supabase
-      .from('resources')
-      .select('id, owner_user_id, institution_id')
-      .eq('id', booking.resource_id)
-      .maybeSingle()
-
-    if (resourceError) throw resourceError
-    isResourceManager = Boolean(
-      resource &&
-      resource.owner_user_id === user.id &&
-      resource.institution_id === booking.institution_id,
-    )
+  if (!isEligibleStudent) {
+    throw new Error('Only the student who owns this booking can record its handover.')
   }
-
-  if (!isEligibleStudent && !isResourceManager) {
-    throw new Error('You are not authorised to record a handover report for this booking.')
+  const evidencePrefix = `${booking.institution_id}/${booking.id}/${input.phase}/${user.id}/`
+  if ((input.evidencePaths ?? []).some((path) => !path.startsWith(evidencePrefix))) {
+    throw new Error('The handover evidence does not belong to this booking.')
   }
 
   if (input.phase === 'check_out' && (booking.status !== 'approved' || new Date(booking.starts_at) > new Date())) {
@@ -395,6 +387,7 @@ export async function recordBookingCondition(input: {
     p_rating: input.rating,
     p_notes: input.notes.trim() || '',
     p_checklist: input.checklist,
+    p_evidence_paths: input.evidencePaths ?? [],
   })
 
   if (error) {
@@ -405,6 +398,8 @@ export async function recordBookingCondition(input: {
   revalidatePath('/student/handover')
   revalidatePath('/owner/handover')
   revalidatePath('/owner/requests')
+  revalidatePath('/owner/notifications')
+  revalidatePath('/student/notifications')
   return { ok: true }
 }
 

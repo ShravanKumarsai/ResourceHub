@@ -4,6 +4,7 @@ export type IncidentViewRole = 'student' | 'owner' | 'institution'
 
 export interface IncidentWorkspaceResource {
   id: string
+  institutionId: string
   name: string
 }
 
@@ -32,6 +33,9 @@ export interface IncidentWorkspaceRecord {
   title: string
   description: string
   createdAt: string
+  evidenceUrls: string[]
+  lateFlagCount: number | null
+  lateFlagThreshold: number | null
   history: IncidentWorkspaceEvent[]
 }
 

@@ -188,26 +188,37 @@ select is(
 );
 
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000009602', true);
-select lives_ok(
+select throws_ok(
   $$select public.record_booking_condition_report(
     '00000000-0000-4000-8000-000000009642',
     'check_out', 'good', '', array['Manager inspected item']
   )$$,
-  'A resource manager can check out a booking for their managed resource'
+  '42501',
+  'Only the active student who owns this booking can record a handover.',
+  'A resource manager cannot check out a booking for a student'
 );
-select lives_ok(
+select throws_ok(
   $$select public.record_booking_condition_report(
     '00000000-0000-4000-8000-000000009642',
     'check_in', 'good', '', array['Manager confirmed return']
   )$$,
-  'A resource manager can check in the same booking after check-out'
+  '42501',
+  'Only the active student who owns this booking can record a handover.',
+  'A resource manager cannot check in a booking for a student'
 );
 select is(
-  (select recorded_by::text from public.condition_reports
-   where booking_id = '00000000-0000-4000-8000-000000009642'
-     and phase = 'check_in'),
-  '00000000-0000-4000-8000-000000009602',
-  'The resource manager actor comes from the authenticated session'
+  (select count(*)::integer from public.condition_reports
+   where booking_id = '00000000-0000-4000-8000-000000009642'),
+  0,
+  'Denied manager handovers do not create condition records'
+);
+select is(
+  (select late_flag_count::integer
+   from public.get_owned_student_late_flag_counts(
+     array['00000000-0000-4000-8000-000000009601'::uuid]
+   )),
+  0,
+  'A resource manager sees the scoped late-return count for a student with a handover'
 );
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000009606', true);
 select throws_ok(
@@ -216,8 +227,31 @@ select throws_ok(
     'check_out', 'good', '', array['Administrator attempt']
   )$$,
   '42501',
-  'Booking participant authorization required.',
-  'An institutional administrator cannot record handovers without the operational resource-owner role'
+  'Only the active student who owns this booking can record a handover.',
+  'An institutional administrator cannot record routine handovers'
+);
+select lives_ok(
+  $$select public.set_institution_accountability_settings(
+    '00000000-0000-4000-8000-000000009611', 2, null, 'UTC'
+  )$$,
+  'An institution administrator can configure the late-return threshold'
+);
+select is(
+  (select late_flag_threshold
+   from public.get_institution_accountability_settings(
+     '00000000-0000-4000-8000-000000009611'
+   )),
+  2,
+  'Institution-specific accountability settings are returned to their administrator'
+);
+select is(
+  (select late_flag_threshold
+   from public.get_institution_member_late_flag_counts(
+     '00000000-0000-4000-8000-000000009611',
+     array['00000000-0000-4000-8000-000000009621'::uuid]
+   )),
+  2,
+  'Institution administrators see the configured threshold for active student members'
 );
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000009602', true);
 select throws_ok(
@@ -226,7 +260,7 @@ select throws_ok(
     'check_out', 'good', '', array['Cross institution attempt']
   )$$,
   '42501',
-  'Booking participant authorization required.',
+  'Only the active student who owns this booking can record a handover.',
   'A resource manager cannot submit a report for another institution resource'
 );
 select throws_ok(
@@ -255,7 +289,7 @@ select throws_ok(
     'check_out', 'good', '', array['Unauthorised attempt']
   )$$,
   '42501',
-  'Booking participant authorization required.',
+  'Only the active student who owns this booking can record a handover.',
   'A user without the booking participant role cannot submit a handover report'
 );
 
@@ -272,12 +306,28 @@ select throws_ok(
 
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000009601', true);
 select lives_ok(
-  $$select public.report_resource_incident(
+  $$select public.report_resource_incident_with_evidence(
     '00000000-0000-4000-8000-000000009631',
     '00000000-0000-4000-8000-000000009641',
-    'medium', 'Test incident', 'A sufficiently detailed incident description.'
+    'medium', 'Test incident', 'A sufficiently detailed incident description.',
+    '{}'::text[], '00000000-0000-4000-8000-000000009681'
   )$$,
   'An authenticated student can report an incident for their own booking'
+);
+select is(
+  public.report_resource_incident_with_evidence(
+    '00000000-0000-4000-8000-000000009631',
+    '00000000-0000-4000-8000-000000009641',
+    'medium', 'Test incident', 'A sufficiently detailed incident description.',
+    '{}'::text[], '00000000-0000-4000-8000-000000009681'
+  ),
+  (select id from public.incidents where title = 'Test incident'),
+  'Repeating an incident submission with the same key returns the original record'
+);
+select is(
+  (select count(*)::integer from public.incidents where title = 'Test incident'),
+  1,
+  'Incident submission retries do not create duplicate incidents'
 );
 select is(
   (select count(*)::integer from public.incident_events
@@ -310,9 +360,10 @@ select is(
 
 select set_config('request.jwt.claim.sub', '', true);
 select throws_ok(
-  $$select public.report_resource_incident(
+  $$select public.report_resource_incident_with_evidence(
     '00000000-0000-4000-8000-000000009631',
-    null, 'low', 'Unauthenticated report', 'A sufficiently detailed incident description.'
+    null, 'low', 'Unauthenticated report', 'A sufficiently detailed incident description.',
+    '{}'::text[], '00000000-0000-4000-8000-000000009683'
   )$$,
   '42501',
   'Authentication required.',
@@ -342,9 +393,10 @@ select is(
 
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000009603', true);
 select lives_ok(
-  $$select public.report_resource_incident(
+  $$select public.report_resource_incident_with_evidence(
     '00000000-0000-4000-8000-000000009632',
-    null, 'low', 'Institution B incident', 'A sufficiently detailed incident description.'
+    null, 'low', 'Institution B incident', 'A sufficiently detailed incident description.',
+    '{}'::text[], '00000000-0000-4000-8000-000000009682'
   )$$,
   'A resource manager can create an incident for their own resource without a booking'
 );
@@ -378,6 +430,82 @@ select is(
    where institution_id = '00000000-0000-4000-8000-000000009611'),
   0,
   'A user without an operational role cannot read institution activity'
+);
+
+select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000009601', true);
+select lives_ok(
+  $$select public.record_booking_condition_report(
+    '00000000-0000-4000-8000-000000009642',
+    'check_out', 'good', '', array['Item condition checked']
+  )$$,
+  'A student can check out a booking whose scheduled end has passed'
+);
+reset role;
+set local role service_role;
+select is(
+  public.process_overdue_handover_flags(100),
+  1,
+  'The scheduled worker flags an outstanding handover after its deadline'
+);
+select is(
+  public.process_overdue_handover_flags(100),
+  0,
+  'Repeated overdue processing does not create a duplicate late flag'
+);
+select lives_ok(
+  $$select public.queue_scheduled_booking_notifications()$$,
+  'The scheduled booking notification worker completes after late-flag processing'
+);
+select is(
+  (select count(*)::integer
+   from public.notifications
+   where recipient_id = '00000000-0000-4000-8000-000000009602'
+     and title = 'Important: Late Check-out Detected'
+     and details ->> 'bookingId' = '00000000-0000-4000-8000-000000009642'),
+  1,
+  'The owner receives one detailed late-return notification'
+);
+select is(
+  (select count(*)::integer
+   from public.notifications
+   where recipient_id = '00000000-0000-4000-8000-000000009602'
+     and title = 'Resource return overdue'),
+  0,
+  'Routine overdue scheduling does not duplicate the detailed owner alert'
+);
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000009602', true);
+select is(
+  (select late_flag_count::integer
+   from public.get_owned_student_late_flag_counts(
+     array['00000000-0000-4000-8000-000000009601'::uuid]
+   )),
+  1,
+  'Managers see the incremented late-return count'
+);
+select is(
+  (select late_flag_threshold
+   from public.get_owned_student_late_flag_counts(
+     array['00000000-0000-4000-8000-000000009601'::uuid]
+   )),
+  2,
+  'Manager late-return counts use the institution-configured threshold'
+);
+select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000009601', true);
+select is(
+  (select late_flag_count::integer
+   from public.get_my_late_return_summary()
+   where institution_id = '00000000-0000-4000-8000-000000009611'),
+  1,
+  'Students can see their own institution-scoped late-return count'
+);
+select is(
+  (select late_flag_threshold
+   from public.get_my_late_return_summary()
+   where institution_id = '00000000-0000-4000-8000-000000009611'),
+  2,
+  'Student profile summaries use the institution-configured threshold'
 );
 
 select * from finish();

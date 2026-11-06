@@ -14,7 +14,7 @@ export async function NotificationCenter({ role }: { role: Role }) {
 
   const { data, error } = await supabase
     .from('notifications')
-    .select('id, title, body, created_at, read_at')
+    .select('id, title, body, details, created_at, read_at')
     .eq('recipient_id', user.id)
     .order('created_at', { ascending: false })
     .limit(100)

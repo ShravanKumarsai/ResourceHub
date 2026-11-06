@@ -1,17 +1,138 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { createClient } from '@/lib/supabase/client'
+import type { Json } from '@/lib/supabase/database.types'
 
 export interface NotificationItem {
   id: string
   title: string
   body: string
+  details: Json
   created_at: string
   read_at: string | null
+}
+
+type JsonObject = { [key: string]: Json | undefined }
+
+function isJsonObject(value: Json | undefined): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function stringValue(value: Json | undefined) {
+  return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+    ? String(value)
+    : null
+}
+
+function stringList(value: Json | undefined) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
+
+function HandoverNotificationDetails({ details }: { details: Json }) {
+  if (!isJsonObject(details)) return null
+
+  const isHandover = details.type === 'handover_summary'
+  if (!isHandover && details.type !== 'late_return') return null
+  const handoverUrl = stringValue(details.url)
+  const lateHandoverUrl = stringValue(details.handoverUrl)
+  const historyUrl = stringValue(details.studentHistoryUrl)
+  const checkOut = isHandover && isJsonObject(details.checkOut) ? details.checkOut : null
+  const checkIn = isHandover && isJsonObject(details.checkIn) ? details.checkIn : null
+  const fields: Array<[string, Json | undefined]> = isHandover
+    ? [
+        ['Student', details.studentName],
+        ['Student identifier', details.studentId],
+        ['Institution', details.institutionName],
+        ['Resource', details.resourceName],
+        ['Resource identifier', details.resourceId],
+        ['Booking reference', details.bookingId],
+        ['Scheduled start', details.scheduledStart],
+        ['Scheduled end', details.scheduledEnd],
+        ['Checked out', details.checkedOutAt],
+        ['Checked in', details.checkedInAt],
+        ['Usage duration (seconds)', details.usageDurationSeconds],
+        ['Return status', details.returnedOnTime ? 'On time' : 'Late'],
+        ['Institution timezone', details.timezone],
+      ]
+    : [
+        ['Student', details.studentName],
+        ['Student identifier', details.studentId],
+        ['Resource', details.resourceName],
+        ['Resource identifier', details.resourceId],
+        ['Booking reference', details.bookingId],
+        ['Scheduled deadline', details.scheduledDeadline],
+        ['Flag generated', details.flaggedAt],
+        ['Check-in status', details.checkInStatus],
+        ['Previous late flags', details.previousLateFlags],
+        ['Attention threshold', details.lateFlagThreshold],
+        ['Institution timezone', details.timezone],
+      ]
+
+  return (
+    <div className="border-line mt-3 rounded-lg border bg-white p-3">
+      <dl className="grid gap-x-4 gap-y-2 text-xs sm:grid-cols-2">
+        {fields.map(([label, value]) => {
+          const text = stringValue(value)
+          return text ? (
+            <div key={label}>
+              <dt className="text-ink-muted">{label}</dt>
+              <dd className="text-ink break-words font-medium">{text}</dd>
+            </div>
+          ) : null
+        })}
+      </dl>
+      {checkOut || checkIn ? (
+        <div className="mt-3 grid gap-3 border-t border-line-muted pt-3 sm:grid-cols-2">
+          {[['Collection', checkOut], ['Return', checkIn]].map(([label, report]) => {
+            if (typeof label !== 'string' || !isJsonObject(report as Json | undefined)) return null
+            const value = report as JsonObject
+            return (
+              <section key={label} className="text-xs">
+                <h3 className="font-semibold">{label} condition</h3>
+                <p className="text-ink-muted mt-1">
+                  Condition: {stringValue(value.rating) ?? 'Not recorded'}
+                </p>
+                <p className="text-ink-muted mt-1">
+                  Checklist: {stringList(value.checklist).join(', ') || 'None'}
+                </p>
+                {stringValue(value.comments) ? (
+                  <p className="text-ink-muted mt-1 whitespace-pre-wrap">
+                    Comments: {stringValue(value.comments)}
+                  </p>
+                ) : null}
+                {stringList(value.evidence).length ? (
+                  <p className="text-ink-muted mt-1">
+                    Evidence: {stringList(value.evidence).length} private attachment(s) stored with the handover.
+                  </p>
+                ) : null}
+              </section>
+            )
+          })}
+        </div>
+      ) : null}
+      {handoverUrl?.startsWith('/owner/') || lateHandoverUrl?.startsWith('/owner/') ? (
+        <Link
+          href={handoverUrl?.startsWith('/owner/') ? handoverUrl : lateHandoverUrl!}
+          className="mt-3 inline-flex text-xs font-medium text-teal underline underline-offset-2"
+        >
+          View handover history
+        </Link>
+      ) : null}
+      {historyUrl?.startsWith('/owner/') ? (
+        <Link
+          href={historyUrl}
+          className="ml-4 mt-3 inline-flex text-xs font-medium text-teal underline underline-offset-2"
+        >
+          View student history
+        </Link>
+      ) : null}
+    </div>
+  )
 }
 
 export function NotificationList({ items }: { items: NotificationItem[] }) {
@@ -69,6 +190,7 @@ export function NotificationList({ items }: { items: NotificationItem[] }) {
                 </time>
               </div>
               <p className="text-ink-muted mt-1 text-sm leading-6">{notification.body}</p>
+              <HandoverNotificationDetails details={notification.details} />
             </div>
             {unread ? (
               <Button

@@ -9,6 +9,7 @@ import {
   PlusCircle,
   Search,
   ShieldAlert,
+  Settings2,
   UserRound,
   UsersRound,
   type LucideIcon,
@@ -92,6 +93,7 @@ export const NAV: Record<Role, NavGroup[]> = {
       items: [
         { href: '/institution/incidents', label: 'Incidents', icon: ShieldAlert },
         { href: '/institution/activity', label: 'Activity history', icon: Activity },
+        { href: '/institution/settings', label: 'Accountability settings', icon: Settings2 },
       ],
     },
     {

@@ -1,5 +1,8 @@
 import type { Metadata } from 'next'
-import { MembershipDirectory } from '@/components/institution/membership-directory'
+import {
+  MembershipDirectory,
+  type InstitutionMembershipDirectoryEntry,
+} from '@/components/institution/membership-directory'
 import { requireInstitutionAdmin } from '@/lib/auth/institution-admin'
 import { logSupabaseError } from '@/lib/supabase/dev-error'
 
@@ -15,13 +18,54 @@ export default async function InstitutionPage() {
     logSupabaseError('Loading institution membership directory failed', error)
   }
 
-  const entries = error ? null : ((data as Array<Record<string, unknown>> | null) ?? null)
+  const rawEntries = error ? null : data ?? null
+  const lateFlagCounts = new Map<string, { count: number; threshold: number }>()
+  let lateFlagLoadError = false
+
+  if (rawEntries) {
+    const membershipIds = rawEntries
+      .filter((entry) => entry.status === 'active' && entry.approved_roles.includes('student'))
+      .map((entry) => entry.membership_id)
+
+    for (let offset = 0; offset < membershipIds.length; offset += 100) {
+      const { data: countRows, error: countError } = await supabase.rpc(
+        'get_institution_member_late_flag_counts',
+        {
+          p_institution_id: institution.id,
+          p_membership_ids: membershipIds.slice(offset, offset + 100),
+        },
+      )
+      if (countError) {
+        logSupabaseError('Loading institution late-return counts failed', countError)
+        lateFlagLoadError = true
+        break
+      }
+      for (const row of countRows ?? []) {
+        lateFlagCounts.set(row.membership_id, {
+          count: Number(row.late_flag_count),
+          threshold: row.late_flag_threshold,
+        })
+      }
+    }
+  }
+
+  const entries: InstitutionMembershipDirectoryEntry[] | null = rawEntries
+    ? rawEntries.map((entry) => {
+        const lateFlag = lateFlagCounts.get(entry.membership_id)
+        return {
+          ...entry,
+          late_flag_count: lateFlag?.count ?? null,
+          late_flag_threshold: lateFlag?.threshold ?? null,
+        }
+      })
+    : null
 
   return (
     <MembershipDirectory
       institutionName={institution.name}
-      entries={entries as any}
+      entries={entries}
       loadError={Boolean(error)}
+      lateFlagLoadError={lateFlagLoadError}
     />
   )
 }

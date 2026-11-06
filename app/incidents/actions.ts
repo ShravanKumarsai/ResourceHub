@@ -97,7 +97,7 @@ export async function loadIncidentWorkspace(
   let incidentQuery = supabase
     .from('incidents')
     .select(
-      'id, resource_id, booking_id, reporter_user_id, severity, status, title, description, created_at',
+      'id, resource_id, booking_id, reporter_user_id, severity, status, title, description, evidence_paths, created_at',
     )
   if (role === 'institution' && institutionId) {
     incidentQuery = incidentQuery.eq('institution_id', institutionId)
@@ -132,6 +132,50 @@ export async function loadIncidentWorkspace(
     : { data: [], error: null }
 
   if (eventResult.error) throw eventResult.error
+
+  const evidencePaths = incidentRows.flatMap((incident) => incident.evidence_paths)
+  const evidenceResult = evidencePaths.length
+    ? await supabase.storage
+        .from('incident-evidence')
+        .createSignedUrls(evidencePaths, 10 * 60)
+    : { data: [], error: null }
+  if (evidenceResult.error) throw evidenceResult.error
+
+  const signedUrlByPath = new Map<string, string>()
+  for (const item of evidenceResult.data ?? []) {
+    if (item.path && item.signedUrl) {
+      signedUrlByPath.set(item.path, item.signedUrl)
+    }
+  }
+  if (evidencePaths.some((path) => !signedUrlByPath.has(path))) {
+    throw new Error('One or more incident evidence files could not be opened.')
+  }
+
+  const evidenceByIncident = new Map<string, string[]>()
+  for (const incident of incidentRows) {
+    const signedUrls = incident.evidence_paths
+      .map((path) => signedUrlByPath.get(path))
+      .filter((url): url is string => url !== undefined)
+    evidenceByIncident.set(incident.id, signedUrls)
+  }
+
+  const lateFlagCounts = new Map<
+    string,
+    { count: number; threshold: number }
+  >()
+  if (role === 'owner' && incidentRows.length) {
+    const studentIds = [...new Set(incidentRows.map((incident) => incident.reporter_user_id))]
+    const lateFlagResult = await supabase.rpc('get_owned_student_late_flag_counts', {
+      p_student_user_ids: studentIds,
+    })
+    if (lateFlagResult.error) throw lateFlagResult.error
+    for (const result of lateFlagResult.data ?? []) {
+      lateFlagCounts.set(result.student_user_id, {
+        count: Number(result.late_flag_count),
+        threshold: result.late_flag_threshold,
+      })
+    }
+  }
 
   let reportResources: { id: string; name: string }[] = []
   let reportBookings: IncidentWorkspaceBooking[] = []
@@ -191,7 +235,7 @@ export async function loadIncidentWorkspace(
   const resourceResult = resourceIds.length
     ? await supabase
         .from('resources')
-        .select('id, name')
+        .select('id, institution_id, name')
         .in('id', resourceIds)
     : { data: [], error: null }
 
@@ -232,10 +276,14 @@ export async function loadIncidentWorkspace(
       title: incident.title,
       description: incident.description,
       createdAt: incident.created_at,
+      evidenceUrls: evidenceByIncident.get(incident.id) ?? [],
+      lateFlagCount: lateFlagCounts.get(incident.reporter_user_id)?.count ?? null,
+      lateFlagThreshold: lateFlagCounts.get(incident.reporter_user_id)?.threshold ?? null,
       history: historyByIncident.get(incident.id) ?? [],
     })),
     resources: (resourceResult.data ?? []).map((resource) => ({
       id: resource.id,
+      institutionId: resource.institution_id,
       name: resourceNames.get(resource.id) ?? resource.name,
     })),
     bookings: reportBookings,
@@ -256,6 +304,8 @@ export async function reportIncident(input: {
   severity: string
   title: string
   description: string
+  evidencePaths: string[]
+  idempotencyKey: string
 }) {
   if (!input || typeof input !== 'object') {
     throw new Error('Incident details are invalid.')
@@ -279,6 +329,11 @@ export async function reportIncident(input: {
     throw new Error('Choose one of your eligible bookings for this report.')
   }
   if (
+    typeof input.idempotencyKey !== 'string' ||
+    !UUID_PATTERN.test(input.idempotencyKey) ||
+    !Array.isArray(input.evidencePaths) ||
+    input.evidencePaths.length > 8 ||
+    input.evidencePaths.some((path) => typeof path !== 'string' || path.length > 512) ||
     !INCIDENT_SEVERITIES.includes(input.severity as IncidentSeverity) ||
     typeof input.title !== 'string' ||
     input.title.trim().length < 3 ||
@@ -312,12 +367,14 @@ export async function reportIncident(input: {
     }
   }
 
-  const { data, error } = await supabase.rpc('report_resource_incident', {
+  const { data, error } = await supabase.rpc('report_resource_incident_with_evidence', {
     p_resource_id: input.resourceId,
     p_booking_id: input.bookingId,
     p_severity: input.severity,
     p_title: input.title.trim(),
     p_description: input.description.trim(),
+    p_evidence_paths: input.evidencePaths,
+    p_idempotency_key: input.idempotencyKey,
   })
 
   if (error) {

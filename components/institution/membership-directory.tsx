@@ -10,6 +10,8 @@ export interface InstitutionMembershipDirectoryEntry {
   status: string
   requested_at: string
   reviewed_at: string | null
+  late_flag_count: number | null
+  late_flag_threshold: number | null
 }
 
 function roleLabel(role: string) {
@@ -31,10 +33,12 @@ export function MembershipDirectory({
   institutionName,
   entries,
   loadError,
+  lateFlagLoadError,
 }: {
   institutionName: string
   entries: InstitutionMembershipDirectoryEntry[] | null
   loadError: boolean
+  lateFlagLoadError: boolean
 }) {
   return (
     <main className="container-page min-h-dvh max-w-5xl py-8 sm:py-12">
@@ -85,6 +89,12 @@ export function MembershipDirectory({
           </p>
         </section>
       ) : (
+        <>
+        {lateFlagLoadError ? (
+          <p role="alert" className="mt-5 rounded-lg border border-status-pending/25 bg-status-pending-bg p-3 text-sm text-status-pending">
+            Late-return threshold indicators could not be loaded. Refresh to retry.
+          </p>
+        ) : null}
         <ul className="mt-7 space-y-3">
           {entries.map((entry) => {
             const roles =
@@ -112,6 +122,22 @@ export function MembershipDirectory({
                       {entry.status === 'active' ? 'Approved role' : 'Requested role'}:
                       {' '}{roles.join(', ') || 'Not recorded for this legacy request'}
                     </p>
+                    {entry.status === 'active' &&
+                    entry.approved_roles.includes('student') &&
+                    entry.late_flag_count !== null &&
+                    entry.late_flag_threshold !== null ? (
+                      <p
+                        className={
+                          entry.late_flag_count >= entry.late_flag_threshold
+                            ? 'mt-2 w-fit rounded-full bg-status-rejected-bg px-3 py-1 text-xs font-medium text-status-rejected'
+                            : 'mt-2 w-fit rounded-full bg-surface px-3 py-1 text-xs font-medium text-ink-muted'
+                        }
+                      >
+                        {entry.late_flag_count >= entry.late_flag_threshold
+                          ? `Late-return threshold reached (${entry.late_flag_count} flags)`
+                          : `Late returns: ${entry.late_flag_count} / ${entry.late_flag_threshold}`}
+                      </p>
+                    ) : null}
                   </div>
                   <span className="w-fit rounded-full bg-surface px-3 py-1 text-xs font-semibold capitalize text-navy">
                     {entry.status}
@@ -125,6 +151,7 @@ export function MembershipDirectory({
             )
           })}
         </ul>
+        </>
       )}
     </main>
   )

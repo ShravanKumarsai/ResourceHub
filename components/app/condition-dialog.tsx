@@ -33,11 +33,12 @@ export function ConditionDialog({
   mode: 'out' | 'in'
   resourceName: string
   recordedBy: string
-  onSubmit: (report: ConditionReport) => boolean
+  onSubmit: (report: ConditionReport & { evidenceFiles: File[] }) => boolean
 }) {
   const [rating, setRating] = useState<ConditionRating>('good')
   const [notes, setNotes] = useState('')
   const [checked, setChecked] = useState<string[]>([])
+  const [evidenceFiles, setEvidenceFiles] = useState<File[]>([])
   const [submitError, setSubmitError] = useState('')
   const items = CHECKLIST[mode]
 
@@ -55,17 +56,27 @@ export function ConditionDialog({
       setSubmitError('Describe the damage in at least 10 characters.')
       return
     }
+    if (
+      evidenceFiles.length > 8 ||
+      evidenceFiles.some((file) => file.size > 10 * 1024 * 1024 ||
+        !['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(file.type))
+    ) {
+      setSubmitError('Attach up to 8 JPEG, PNG, WebP, or PDF files, each no larger than 10 MB.')
+      return
+    }
     const saved = onSubmit({
       rating,
       notes: notes.trim(),
       checklist: checked,
       recordedAt: new Date().toISOString(),
       recordedBy,
+      evidenceFiles,
     })
     if (!saved) return
     setRating('good')
     setNotes('')
     setChecked([])
+    setEvidenceFiles([])
     setSubmitError('')
     onOpenChange(false)
   }
@@ -129,6 +140,23 @@ export function ConditionDialog({
               placeholder="Anything the next user or the owner should know"
               rows={3}
             />
+          </div>
+
+          <div>
+            <label htmlFor={`evidence-${mode}`} className="mb-1.5 block text-sm font-medium">
+              Evidence <span className="text-ink-muted font-normal">(optional)</span>
+            </label>
+            <input
+              id={`evidence-${mode}`}
+              type="file"
+              multiple
+              accept="image/jpeg,image/png,image/webp,application/pdf"
+              onChange={(event) => setEvidenceFiles(Array.from(event.target.files ?? []))}
+              className="text-ink-muted block w-full text-sm file:mr-3 file:rounded-md file:border file:border-line file:bg-white file:px-3 file:py-1.5"
+            />
+            <p className="text-ink-muted mt-1 text-xs">
+              Up to 8 JPEG, PNG, WebP, or PDF files, 10 MB each.
+            </p>
           </div>
 
           {checked.length === 0 ? <p role="status" className="text-ink-muted text-xs">Select at least one checklist item before submitting.</p> : null}

@@ -50,10 +50,18 @@ async function runCron(request: Request) {
 
   try {
     const admin = createAdminClient()
+    const { data: lateFlagsCreated, error: lateFlagsError } = await admin.rpc(
+      'process_overdue_handover_flags',
+      { p_limit: MAX_NOTIFICATION_BATCH_SIZE },
+    )
+    if (lateFlagsError || typeof lateFlagsCreated !== 'number') {
+      return jsonResponse({ error: 'late_return_processing_unavailable' }, 503)
+    }
+
     const { data: scheduledCount, error: scheduleError } = await admin.rpc(
       'queue_scheduled_booking_notifications',
     )
-    if (scheduleError) {
+    if (scheduleError || typeof scheduledCount !== 'number') {
       return jsonResponse({ error: 'scheduled_notifications_unavailable' }, 503)
     }
 
@@ -64,7 +72,8 @@ async function runCron(request: Request) {
         retrying: 0,
         skipped: 0,
         finishErrors: 0,
-        scheduledNotifications: scheduledCount ?? 0,
+        lateFlagsCreated,
+        scheduledNotifications: scheduledCount,
         deliveryConfigured: false,
       })
     }
@@ -106,10 +115,12 @@ async function runCron(request: Request) {
 
     return jsonResponse({
       ...summary,
-      scheduledNotifications: scheduledCount ?? 0,
+      lateFlagsCreated,
+      scheduledNotifications: scheduledCount,
       deliveryConfigured: true,
     })
-  } catch {
+  } catch (error) {
+    console.error('Notification delivery worker failed.', error)
     return jsonResponse({ error: 'notification_delivery_unavailable' }, 503)
   }
 }

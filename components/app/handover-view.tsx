@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { recordBookingCondition } from '@/app/bookings/actions'
 import { BookingList } from '@/components/app/booking-list'
 import { ConditionDialog } from '@/components/app/condition-dialog'
+import { ManagerHandoverHistory } from '@/components/app/manager-handover-history'
 import { EmptyState, PageHeader, SectionCard } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import { CONDITION_LABEL, formatDateTime, getTodayIso } from '@/lib/format'
@@ -23,42 +24,19 @@ async function loadHandoverData(role: Role) {
     return { bookings: [], resourceNames: {} as Record<string, string> }
   }
 
-  let resourceIds: string[] = []
-  let bookingsResult
-
-  if (role === 'student') {
-    bookingsResult = await supabase
+  const bookingsResult = await supabase
       .from('bookings')
       .select('*')
       .eq('requester_user_id', userData.user.id)
       .in('status', ['approved', 'in_use', 'completed'])
       .order('starts_at', { ascending: false })
-  } else {
-    const { data: ownedResources, error: resourceError } = await supabase
-      .from('resources')
-      .select('id')
-      .eq('owner_user_id', userData.user.id)
-
-    if (resourceError) throw resourceError
-    resourceIds = (ownedResources ?? []).map((resource) => resource.id)
-    if (!resourceIds.length) {
-      return { bookings: [], resourceNames: {} }
-    }
-
-    bookingsResult = await supabase
-      .from('bookings')
-      .select('*')
-      .in('resource_id', resourceIds)
-      .in('status', ['approved', 'in_use', 'completed'])
-      .order('starts_at', { ascending: false })
-  }
 
   if (bookingsResult.error) throw bookingsResult.error
   const bookingIds = (bookingsResult.data ?? []).map((booking) => booking.id)
   const resourceMap: Record<string, string> = {}
 
   const [resourceResult, conditionResult] = await Promise.all([
-    resourceIds.length || (bookingsResult.data ?? []).length
+    (bookingsResult.data ?? []).length
       ? supabase
           .from('resources')
           .select('id, name')
@@ -90,6 +68,7 @@ async function loadHandoverData(role: Role) {
     const mapped: Booking = {
       id: booking.id,
       resourceId: booking.resource_id,
+      institutionId: booking.institution_id,
       requesterId: booking.requester_user_id,
       requesterName: 'Requester',
       requesterAffiliation: 'Institution',
@@ -108,6 +87,7 @@ async function loadHandoverData(role: Role) {
         rating: conditionReport.checkOut.rating,
         notes: conditionReport.checkOut.notes,
         checklist: conditionReport.checkOut.checklist,
+        evidencePaths: conditionReport.checkOut.evidence_paths,
         recordedAt: conditionReport.checkOut.recorded_at,
         recordedBy: 'Recorder',
       }
@@ -117,6 +97,7 @@ async function loadHandoverData(role: Role) {
         rating: conditionReport.checkIn.rating,
         notes: conditionReport.checkIn.notes,
         checklist: conditionReport.checkIn.checklist,
+        evidencePaths: conditionReport.checkIn.evidence_paths,
         recordedAt: conditionReport.checkIn.recorded_at,
         recordedBy: 'Recorder',
       }
@@ -128,6 +109,10 @@ async function loadHandoverData(role: Role) {
 }
 
 export function HandoverView({ role }: { role: Role }) {
+  return role === 'owner' ? <ManagerHandoverHistory /> : <StudentHandoverView />
+}
+
+function StudentHandoverView() {
   const [bookings, setBookings] = useState<Booking[]>([])
   const [resourceNames, setResourceNames] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -138,7 +123,7 @@ export function HandoverView({ role }: { role: Role }) {
   async function refresh() {
     try {
       setLoading(true)
-      const result = await loadHandoverData(role)
+      const result = await loadHandoverData('student')
       setBookings(result.bookings)
       setResourceNames(result.resourceNames)
       setError(null)
@@ -151,7 +136,7 @@ export function HandoverView({ role }: { role: Role }) {
 
   useEffect(() => {
     void refresh()
-  }, [role])
+  }, [])
 
   const ready = bookings.filter((booking) => booking.status === 'approved' && booking.date <= today)
   const inUse = bookings.filter((booking) => booking.status === 'in-use')
@@ -164,16 +149,43 @@ export function HandoverView({ role }: { role: Role }) {
     checklist: string[]
     recordedAt: string
     recordedBy: string
+    evidenceFiles: File[]
   }) {
     if (!dialog) return false
 
+    const phase = dialog.mode === 'out' ? 'check_out' : 'check_in'
+    const institutionId = dialog.booking.institutionId
+    if (!institutionId) {
+      toast.error('The institution for this booking could not be resolved.')
+      return false
+    }
+
+    const supabase = createClient()
+    const evidencePaths: string[] = []
     try {
+      for (const file of report.evidenceFiles) {
+        const extension = file.type === 'image/jpeg'
+          ? 'jpg'
+          : file.type === 'image/png'
+            ? 'png'
+            : file.type === 'image/webp'
+              ? 'webp'
+              : 'pdf'
+        const path = `${institutionId}/${dialog.booking.id}/${phase}/${dialog.booking.requesterId}/${crypto.randomUUID()}.${extension}`
+        const { error: uploadError } = await supabase.storage
+          .from('handover-evidence')
+          .upload(path, file, { contentType: file.type, upsert: false })
+        if (uploadError) throw uploadError
+        evidencePaths.push(path)
+      }
+
       await recordBookingCondition({
         bookingId: dialog.booking.id,
-        phase: dialog.mode === 'out' ? 'check_out' : 'check_in',
+        phase,
         rating: report.rating,
         notes: report.notes,
         checklist: report.checklist,
+        evidencePaths,
       })
       toast.success(dialog.mode === 'out' ? 'Checked out' : 'Checked in', {
         description: `${resourceNames[dialog.booking.resourceId] ?? 'Resource'} (${dialog.booking.id}) recorded as ${CONDITION_LABEL[report.rating].toLowerCase()}.`,
@@ -182,6 +194,14 @@ export function HandoverView({ role }: { role: Role }) {
       setDialog(null)
       return true
     } catch (conditionError) {
+      if (evidencePaths.length) {
+        const { error: cleanupError } = await supabase.storage
+          .from('handover-evidence')
+          .remove(evidencePaths)
+        if (cleanupError) {
+          console.error('Could not remove unused handover evidence.', cleanupError)
+        }
+      }
       toast.error(conditionError instanceof Error ? conditionError.message : 'Could not save the condition report.')
       return false
     }
@@ -192,9 +212,7 @@ export function HandoverView({ role }: { role: Role }) {
       <PageHeader
         title="Check-in / Check-out"
         description={
-          role === 'student'
-            ? 'Record the condition of a resource when you collect it and when you return it.'
-            : 'Record handovers for bookings on your resources and review the condition history.'
+          'Record the condition of a resource when you collect it and when you return it.'
         }
       />
 
@@ -210,8 +228,8 @@ export function HandoverView({ role }: { role: Role }) {
             {ready.length ? (
               <BookingList
                 bookings={ready}
-                role={role}
-                showRequester={role === 'owner'}
+                role="student"
+                showRequester={false}
                 resourceNameMap={resourceNames}
                 renderActions={(booking) => (
                   <Button size="sm" onClick={() => setDialog({ booking, mode: 'out' })}>
@@ -228,8 +246,8 @@ export function HandoverView({ role }: { role: Role }) {
             {inUse.length ? (
               <BookingList
                 bookings={inUse}
-                role={role}
-                showRequester={role === 'owner'}
+                role="student"
+                showRequester={false}
                 resourceNameMap={resourceNames}
                 renderActions={(booking) => (
                   <Button size="sm" onClick={() => setDialog({ booking, mode: 'in' })}>
@@ -244,7 +262,7 @@ export function HandoverView({ role }: { role: Role }) {
 
           {upcoming.length ? (
             <SectionCard title="Upcoming sessions" description="Check-out becomes available on the day of the session.">
-              <BookingList bookings={upcoming} role={role} showRequester={role === 'owner'} resourceNameMap={resourceNames} />
+              <BookingList bookings={upcoming} role="student" showRequester={false} resourceNameMap={resourceNames} />
             </SectionCard>
           ) : null}
 
@@ -274,7 +292,7 @@ export function HandoverView({ role }: { role: Role }) {
           onOpenChange={(openState) => !openState && setDialog(null)}
           mode={dialog.mode}
           resourceName={resourceNames[dialog.booking.resourceId] ?? 'resource'}
-          recordedBy={role === 'student' ? 'Student' : 'Owner'}
+          recordedBy="Student"
           onSubmit={(report) => {
             void handleConditionReport(report)
             return false

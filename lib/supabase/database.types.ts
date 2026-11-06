@@ -186,14 +186,24 @@ export type Database = {
         Partial<{ institution_id: string; resource_id: string; requester_membership_id: string; requester_user_id: string; starts_at: string; ends_at: string; purpose: string; status: string; decision_note: string | null; reviewed_by: string | null; reviewed_at: string | null; cancelled_at: string | null; updated_at: string }>
       >
       condition_reports: Table<
-        { id: string; booking_id: string; phase: string; rating: string; notes: string; checklist: string[]; recorded_by: string; recorded_at: string },
-        { id?: string; booking_id: string; phase: string; rating: string; notes?: string; checklist: string[]; recorded_by: string; recorded_at?: string },
-        Partial<{ booking_id: string; phase: string; rating: string; notes: string; checklist: string[]; recorded_by: string; recorded_at: string }>
+        { id: string; booking_id: string; phase: string; rating: string; notes: string; checklist: string[]; recorded_by: string; recorded_at: string; evidence_paths: string[] },
+        { id?: string; booking_id: string; phase: string; rating: string; notes?: string; checklist: string[]; recorded_by: string; recorded_at?: string; evidence_paths?: string[] },
+        Partial<{ booking_id: string; phase: string; rating: string; notes: string; checklist: string[]; recorded_by: string; recorded_at: string; evidence_paths: string[] }>
+      >
+      handover_records: Table<
+        { id: string; booking_id: string; institution_id: string; resource_id: string; student_user_id: string; check_out_report_id: string; check_in_report_id: string | null; checked_out_at: string; checked_in_at: string | null; check_in_deadline: string; timezone: string; returned_on_time: boolean | null; student_comments: string; created_at: string; updated_at: string },
+        { id?: string; booking_id: string; institution_id: string; resource_id: string; student_user_id: string; check_out_report_id: string; check_in_report_id?: string | null; checked_out_at?: string; checked_in_at?: string | null; check_in_deadline: string; timezone?: string; returned_on_time?: boolean | null; student_comments?: string; created_at?: string; updated_at?: string },
+        Partial<{ check_in_report_id: string | null; checked_in_at: string | null; check_in_deadline: string; timezone: string; returned_on_time: boolean | null; student_comments: string; updated_at: string }>
+      >
+      late_return_flags: Table<
+        { id: string; booking_id: string; institution_id: string; resource_id: string; student_user_id: string; scheduled_deadline: string; flagged_at: string; detected_by: string | null },
+        { id?: string; booking_id: string; institution_id: string; resource_id: string; student_user_id: string; scheduled_deadline: string; flagged_at?: string; detected_by?: string | null },
+        Partial<{ scheduled_deadline: string }>
       >
       incidents: Table<
-        { id: string; institution_id: string; resource_id: string; booking_id: string | null; reporter_membership_id: string; reporter_user_id: string; severity: string; status: string; title: string; description: string; created_at: string; updated_at: string },
-        { id?: string; institution_id: string; resource_id: string; booking_id?: string | null; reporter_membership_id: string; reporter_user_id: string; severity: string; status?: string; title: string; description: string; created_at?: string; updated_at?: string },
-        Partial<{ institution_id: string; resource_id: string; booking_id: string | null; reporter_membership_id: string; reporter_user_id: string; severity: string; status: string; title: string; description: string; updated_at: string }>
+        { id: string; institution_id: string; resource_id: string; booking_id: string | null; reporter_membership_id: string; reporter_user_id: string; severity: string; status: string; title: string; description: string; evidence_paths: string[]; created_at: string; updated_at: string },
+        { id?: string; institution_id: string; resource_id: string; booking_id?: string | null; reporter_membership_id: string; reporter_user_id: string; severity: string; status?: string; title: string; description: string; evidence_paths?: string[]; created_at?: string; updated_at?: string },
+        Partial<{ institution_id: string; resource_id: string; booking_id: string | null; reporter_membership_id: string; reporter_user_id: string; severity: string; status: string; title: string; description: string; evidence_paths: string[]; updated_at: string }>
       >
       incident_events: Table<
         { id: string; incident_id: string; institution_id: string; actor_id: string | null; from_status: string | null; to_status: string; note: string; created_at: string },
@@ -211,9 +221,9 @@ export type Database = {
         Partial<{ institution_id: string; actor_id: string | null; resource_id: string | null; booking_id: string | null; incident_id: string | null; event_type: string; summary: string; metadata: Json; created_at: string }>
       >
       notifications: Table<
-        { id: string; recipient_id: string; institution_id: string; activity_event_id: string | null; title: string; body: string; created_at: string; read_at: string | null },
-        { id?: string; recipient_id: string; institution_id: string; activity_event_id?: string | null; title: string; body: string; created_at?: string; read_at?: string | null },
-        Partial<{ recipient_id: string; institution_id: string; activity_event_id: string | null; title: string; body: string; read_at: string }>
+        { id: string; recipient_id: string; institution_id: string; activity_event_id: string | null; title: string; body: string; details: Json; dedupe_key: string | null; created_at: string; read_at: string | null },
+        { id?: string; recipient_id: string; institution_id: string; activity_event_id?: string | null; title: string; body: string; details?: Json; dedupe_key?: string | null; created_at?: string; read_at?: string | null },
+        Partial<{ recipient_id: string; institution_id: string; activity_event_id: string | null; title: string; body: string; details: Json; dedupe_key: string | null; read_at: string }>
       >
       notification_preferences: Table<
         { user_id: string; email_enabled: boolean; push_enabled: boolean; updated_at: string },
@@ -238,8 +248,15 @@ export type Database = {
       set_institution_reservation_limits: { Args: { p_institution_id: string; p_max_active_reservations: number; p_max_concurrent_resources: number }; Returns: undefined }
       review_resource_booking: { Args: { p_booking_id: string; p_decision: string; p_note?: string | null }; Returns: undefined }
       cancel_resource_booking: { Args: { p_booking_id: string }; Returns: undefined }
-      record_booking_condition_report: { Args: { p_booking_id: string; p_phase: string; p_rating: string; p_notes: string; p_checklist: string[] }; Returns: string }
+      record_booking_condition_report: { Args: { p_booking_id: string; p_phase: string; p_rating: string; p_notes: string; p_checklist: string[]; p_evidence_paths: string[] }; Returns: string }
+      process_overdue_handover_flags: { Args: { p_limit?: number }; Returns: number }
+      set_institution_accountability_settings: { Args: { p_institution_id: string; p_late_flag_threshold: number; p_max_usage_duration_minutes: number | null; p_timezone: string }; Returns: undefined }
+      get_institution_accountability_settings: { Args: { p_institution_id: string }; Returns: { late_flag_threshold: number; max_usage_duration_minutes: number | null; timezone: string }[] }
+      get_owned_student_late_flag_counts: { Args: { p_student_user_ids: string[] }; Returns: { institution_id: string; student_user_id: string; late_flag_count: number; late_flag_threshold: number }[] }
+      get_institution_member_late_flag_counts: { Args: { p_institution_id: string; p_membership_ids: string[] }; Returns: { membership_id: string; late_flag_count: number; late_flag_threshold: number }[] }
+      get_my_late_return_summary: { Args: Record<PropertyKey, never>; Returns: { institution_id: string; institution_name: string; late_flag_count: number; late_flag_threshold: number }[] }
       report_resource_incident: { Args: { p_resource_id: string; p_booking_id: string | null; p_severity: string; p_title: string; p_description: string }; Returns: string }
+      report_resource_incident_with_evidence: { Args: { p_resource_id: string; p_booking_id: string | null; p_severity: string; p_title: string; p_description: string; p_evidence_paths: string[]; p_idempotency_key: string }; Returns: string }
       update_resource_incident: { Args: { p_incident_id: string; p_status: string; p_note: string }; Returns: undefined }
       archive_resource: { Args: { p_resource_id: string }; Returns: undefined }
       restore_resource: { Args: { p_resource_id: string }; Returns: undefined }
