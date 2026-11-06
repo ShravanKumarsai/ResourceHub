@@ -9,7 +9,6 @@ import {
   UserCheck,
   History,
 } from 'lucide-react'
-import { unstable_rethrow } from 'next/navigation'
 import { ResourceCard } from '@/components/resource-card'
 import { buttonVariants } from '@/components/ui/button'
 import { listListedResources } from '@/lib/resources/queries'
@@ -42,16 +41,7 @@ export async function LiveResourceShowcase() {
   let resources: Resource[]
   try {
     resources = await listListedResources()
-  } catch (error) {
-    unstable_rethrow(error)
-    const message =
-      typeof error === 'object' &&
-      error !== null &&
-      'message' in error &&
-      typeof error.message === 'string'
-        ? error.message
-        : 'Unknown resource query error'
-    console.error('Could not load homepage resource listings.', { message })
+  } catch {
     return (
       <section className="container-page py-16 lg:py-20" aria-labelledby="resource-error-heading">
         <div className="border-line rounded-xl border bg-white p-6" role="alert">

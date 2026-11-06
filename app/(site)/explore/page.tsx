@@ -8,6 +8,8 @@ import {
   listMyFavoriteResourceIds,
 } from '@/lib/resources/queries'
 
+export const dynamic = 'force-dynamic'
+
 export const metadata: Metadata = {
   title: 'Explore resources',
   description:

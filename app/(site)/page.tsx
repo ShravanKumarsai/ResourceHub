@@ -10,6 +10,8 @@ import {
   ResourceShowcaseLoading,
 } from '@/components/landing/sections'
 
+export const dynamic = 'force-dynamic'
+
 export default function LandingPage() {
   return (
     <>
