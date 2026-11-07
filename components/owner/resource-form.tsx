@@ -219,7 +219,19 @@ export function ResourceForm({
         })
 
         if (uploadError) {
-          throw new Error('The image could not be uploaded to the resource-images bucket.')
+          console.error('ResourceHub image upload failed:', {
+            message: uploadError.message,
+            name: uploadError.name,
+            statusCode: uploadError.statusCode,
+            uploadPath,
+            fileName: selectedFile.name,
+            fileType: selectedFile.type,
+            fileSize: selectedFile.size,
+          })
+
+          throw new Error(
+            `Image upload failed: ${uploadError.message}`
+          )
         }
 
         finalImagePath = uploadPath
